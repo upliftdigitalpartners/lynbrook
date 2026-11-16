@@ -2,7 +2,7 @@
 // Kept free of Deno APIs so it can be unit-tested with Node.
 
 export type Parsed = {
-  provider: 'pseg' | 'nationalgrid' | 'liberty' | null;
+  provider: 'pseg' | 'nationalgrid' | 'liberty' | 'rocket' | null;
   kind: 'bill' | 'payment' | 'other';
   amount: number | null;
   dueDate: string | null; // YYYY-MM-DD
@@ -19,9 +19,11 @@ export function detectProvider(from: string, subject: string, text: string): Par
   if (/pseg|psegliny/.test(s)) return 'pseg';
   if (/national\s*grid|nationalgrid/.test(s)) return 'nationalgrid';
   if (/liberty/.test(s)) return 'liberty';
+  if (/rocket/.test(s)) return 'rocket';
   if (/psegliny|pseg long island/.test(t)) return 'pseg';
   if (/nationalgridus|national grid/.test(t)) return 'nationalgrid';
   if (/libertyenergyandwater|libertyutilities|liberty utilities|liberty water/.test(t)) return 'liberty';
+  if (/rocketmortgage|rocket mortgage/.test(t)) return 'rocket';
   return null;
 }
 
@@ -56,13 +58,13 @@ export function parseEmail(from: string, subject: string, text: string, received
   const low = flat.toLowerCase();
 
   let kind: Parsed['kind'] = 'other';
-  if (/(thank you for your payment|payment (has been )?(received|processed|confirmation|confirmed|was successful|successful)|we('ve| have) received your payment|your payment of|payment posted|autopay (payment )?(processed|completed))/.test(low)) kind = 'payment';
-  else if (/(bill is (ready|available)|new bill|bill (has been )?posted|statement is (ready|available)|amount due|total due|balance due|payment due|due date|your (e-?)?bill|billing statement)/.test(low)) kind = 'bill';
+  if (/(thank you for your payment|payment (has been )?(received|processed|confirmation|confirmed|was successful|successful)|we('ve| have) received your payment|your payment of|payment posted|payment is complete|got your payment|autopay (payment )?(processed|completed))/.test(low)) kind = 'payment';
+  else if (/(bill is (ready|available)|new bill|bill (has been )?posted|statement is (ready|available)|amount due|total due|balance due|payment due|due date|your (e-?)?bill|billing statement|mortgage statement|monthly statement|payment reminder|upcoming payment)/.test(low)) kind = 'bill';
 
   // Amount: prefer the number right after an "amount due"-style label
   const amountLabels = kind === 'payment'
     ? ['payment amount', 'amount paid', 'your payment of', 'payment of', 'amount']
-    : ['total amount due', 'amount due', 'total due', 'balance due', 'amount to pay', 'new balance', 'current charges', 'total current charges', 'bill amount', 'amount'];
+    : ['total amount due', 'amount due', 'total due', 'balance due', 'monthly payment', 'payment amount', 'amount to pay', 'new balance', 'current charges', 'total current charges', 'bill amount', 'amount'];
   let amount: number | null = null;
   for (const label of amountLabels) {
     const re = new RegExp(label.replace(/ /g, '\\s*') + '[^$\\d]{0,40}\\$\\s?([\\d,]+\\.\\d{2})', 'i');
