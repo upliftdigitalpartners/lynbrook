@@ -336,7 +336,7 @@
     else if (S.view === 'recovery') app.innerHTML = recoveryView();
     else if (S.view === 'join') app.innerHTML = joinView();
     else app.innerHTML = appView();
-    if (S.view === 'app') window.scrollTo(0, y);
+    if (S.view === 'app') { window.scrollTo(0, y); updateBadge(); }
     const ns = app.querySelector('.sheet'); if (ns && sheetScroll != null) ns.scrollTop = sheetScroll;
     if (keep) {
       const n = document.getElementById(keep.id);
@@ -435,7 +435,7 @@
       .map(([id, l]) => `<button class="chip" data-act="unit" data-unit="${esc(id)}" aria-pressed="${S.unit === id}">${esc(l)}</button>`).join('');
     const filt = [['all', 'All ' + md.rows.length], ['unpaid', 'Unpaid ' + unpaid], ['paid', 'Paid ' + (md.rows.length - unpaid)]]
       .map(([id, l]) => `<button data-act="filter" data-filter="${id}" aria-pressed="${S.filter === id}">${l}</button>`).join('');
-    return `${setupBanner()}${monthNav()}
+    return `${weatherBanner()}${setupBanner()}${monthNav()}
       ${hero('Bills still to pay', money(md.total - md.paid), pct, money(md.paid) + ' of ' + money(md.total) + ' paid', md.overdue ? md.overdue + ' overdue · ' + money(md.overdueAmt) : 'None overdue', md.overdue)}
       ${md.setup ? `<p class="notice">${md.setup} ${md.setup === 1 ? 'bill needs' : 'bills need'} an amount or due day for ${monthLabel(S.month, true)}. Fill them in on the card.</p>` : ''}
       <div class="chips" role="group" aria-label="Show floor">${unitChips}</div>
@@ -588,7 +588,7 @@
         (un.length ? `<h2 class="section-h">Not scheduled yet</h2><p class="small muted" style="margin:-8px 0 0">Tap <strong>Done</strong> and enter when it was last done; the app works out the next date.</p><ul class="bills">${un.map(taskCard).join('')}</ul>` : '') +
         (!tasks.length ? '<p class="muted" style="text-align:center;padding:28px 0">No upkeep tasks. Tap + to add one.</p>' : '');
     }
-    return `${nav}<section class="hero" aria-label="Upkeep overview">
+    return `${nav}${weatherBanner()}<section class="hero" aria-label="Upkeep overview">
         <div class="row between" style="align-items:flex-end">
           <div class="stack" style="gap:2px"><span class="label">Needs attention</span><span class="big display">${overdue + soon} ${overdue + soon === 1 ? 'task' : 'tasks'}</span></div>
         </div>
@@ -929,7 +929,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v1.8</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v1.9</p>`;
   }
 
   function importCard() {
@@ -1046,6 +1046,28 @@ function setup() {
         </details>`).join('')}
       </div>
     </section>`;
+  }
+  function weatherBanner() {
+    const notes = (S.household && Array.isArray(S.household.weather)) ? S.household.weather : [];
+    const live = notes.filter((n) => !n.until || new Date(n.until) > new Date());
+    return live.map((n) => `<div class="notice weather" role="note"><strong>${esc(n.title)}</strong><br>${esc(n.detail)}</div>`).join('');
+  }
+  // Number shown on the app icon: overdue bills, late rent, upkeep due/overdue, new repair requests
+  function attentionCount() {
+    const cur = monthKey(new Date());
+    const bills = billMonth(cur, true).rows.filter((r) => r.st.k === 'late').length;
+    const rent = rentMonth(cur).late;
+    const upkeep = S.tasks.filter((t) => t.active !== false && t.next_due && dayDiff(fromIso(t.next_due)) <= 0).length;
+    const reqs = S.requests.filter((q) => q.status === 'new').length;
+    return bills + rent + upkeep + reqs;
+  }
+  let lastBadge = -1;
+  function updateBadge() {
+    if (!('setAppBadge' in navigator) || S.view !== 'app' || !S.household) return;
+    const n = attentionCount();
+    if (n === lastBadge) return;
+    lastBadge = n;
+    (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
   }
   function setupBanner() {
     const steps = setupSteps();

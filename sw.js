@@ -1,5 +1,5 @@
 // Service worker: offline app shell + push notifications.
-const VERSION = 'v1.8.0';
+const VERSION = 'v1.9.0';
 const CACHE = 'evergreen-' + VERSION;
 const SHELL = [
   './',
@@ -63,6 +63,7 @@ self.addEventListener('push', (e) => {
   let data = {};
   try { data = e.data ? e.data.json() : {}; } catch (_) { data = { body: e.data && e.data.text() }; }
   const title = data.title || 'Evergreen House';
+  if (typeof data.badge === 'number' && self.navigator && 'setAppBadge' in self.navigator) self.navigator.setAppBadge(data.badge).catch(() => {});
   e.waitUntil(self.registration.showNotification(title, {
     body: data.body || 'You have bills to check.',
     tag: data.tag || 'bills',
