@@ -1,7 +1,7 @@
 // Receives utility emails from the household's Google Apps Script and fills in bills.
 // Auth: the household's import_token (sent as x-import-token).
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
-import { matchAccount, parseEmail } from './parse.ts';
+import { matchAccount, matchTenant, parseEmail, parseZelle } from './parse.ts';
 
 const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 
@@ -45,6 +45,40 @@ Deno.serve(async (req) => {
       await db.from('email_imports').insert({ ...rec, status, detail, bill_id: billId });
       results.push({ id: m.id, status, detail });
     };
+
+    // Zelle rent payments
+    const z = parseZelle(m.from ?? '', m.subject ?? '', text);
+    if (z) {
+      rec.kind = 'zelle'; rec.provider = 'zelle'; rec.amount = z.amount; rec.due_date = null; rec.payer = z.payer;
+      if (!z.incoming) { await done('ignored', 'Not money received'); continue; }
+      if (z.amount == null) { await done('unmatched', `Zelle from ${z.payer ?? 'someone'}: couldn’t read the amount`); continue; }
+      const { data: rentals } = await db.from('rentals').select('id,tenant_name,payer_names,rent_amount,unit_id').eq('household_id', house.id).eq('active', true);
+      const hit = matchTenant(z.payer, z.amount, rentals ?? []);
+      if (!hit) { await done('unmatched', `$${z.amount.toFixed(2)} from ${z.payer ?? 'unknown'}`); continue; }
+      const rental = (rentals ?? []).find((r) => r.id === hit.id)!;
+      const rdate = isNaN(+received) ? new Date() : received;
+      const key = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+      let period = key(rdate);
+      const { data: cur } = await db.from('rent_payments').select('*').eq('rental_id', rental.id).eq('period', period).maybeSingle();
+      const due = Number(cur?.amount_due ?? rental.rent_amount ?? 0);
+      // Paid late in the month and this month is already covered: it's next month's rent.
+      if (rdate.getUTCDate() >= 25 && due > 0 && Number(cur?.amount_received ?? 0) >= due) {
+        period = key(new Date(Date.UTC(rdate.getUTCFullYear(), rdate.getUTCMonth() + 1, 1)));
+      }
+      const target = period === key(rdate) ? cur
+        : (await db.from('rent_payments').select('*').eq('rental_id', rental.id).eq('period', period).maybeSingle()).data;
+      const row = {
+        id: target?.id ?? crypto.randomUUID(), household_id: house.id, rental_id: rental.id, period,
+        amount_due: target?.amount_due ?? rental.rent_amount,
+        amount_received: Math.round((Number(target?.amount_received ?? 0) + z.amount) * 100) / 100,
+        received_at: rdate.toISOString(), method: 'Zelle', note: target?.note ?? null, source: 'email', updated_at: new Date().toISOString(),
+      };
+      const { error } = await db.from('rent_payments').upsert(row, { onConflict: 'rental_id,period' });
+      if (error) { await done('unmatched', 'Save failed: ' + error.message); continue; }
+      rec.rental_id = rental.id;
+      await done('applied', `$${z.amount.toFixed(2)} from ${z.payer ?? 'tenant'} → ${rental.tenant_name ?? 'tenant'}, ${period.slice(0, 7)}${hit.how === 'amount' ? ' (matched by amount)' : ''}`);
+      continue;
+    }
 
     if (!p.provider) { await done('ignored', 'Not from a known utility'); continue; }
     if (p.kind === 'other') { await done('ignored', 'Not a bill or payment email'); continue; }
