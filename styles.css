@@ -652,3 +652,18 @@ details.inner > summary { cursor: pointer; color: var(--accent); font-weight: 60
   .sbar i.on { animation: none; width: 100%; }
   .slidepay:not(.on) .sp-label { color: inherit; background: none; }
 }
+
+/* Utility totals box (top of Bills) */
+.utils { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; animation: v27up .35s ease-out both; }
+.ut { border-radius: 18px; padding: 12px; display: flex; flex-direction: column; gap: 4px; min-width: 0; border: 1px solid var(--line); background: var(--surface); }
+.ut-top { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.ut-icon { width: 26px; height: 26px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; flex: none; }
+.ut strong { font-size: 22px; line-height: 1.1; }
+.ut-sub { font-size: 12px; color: var(--muted); }
+.ut.gas .ut-icon { background: var(--late-bg); }
+.ut.elec .ut-icon { background: var(--soon-bg); }
+.ut.all { grid-column: 1 / -1; background: var(--hero); border-color: transparent; color: var(--hero-ink); }
+.ut.all .ut-top, .ut.all .ut-sub { color: var(--hero-muted); }
+.ut.all .ut-icon { background: rgba(255,255,255,.12); }
+.ut.all strong { font-size: 28px; }
+@media (prefers-reduced-motion: reduce) { .utils { animation: none; } }
