@@ -65,8 +65,8 @@ a { color: var(--accent); }
 .main { flex: 1; padding: 4px 16px calc(100px + var(--safe-b)); display: flex; flex-direction: column; gap: 16px; }
 
 .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; background: var(--surface); border-top: 1px solid var(--line); padding: 6px 8px calc(8px + var(--safe-b)); }
-.tabbar-inner { max-width: 640px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.tab { height: 56px; border: 0; background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 12px; font-weight: 600; color: var(--muted); border-radius: 12px; }
+.tabbar-inner { max-width: 640px; margin: 0 auto; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.tab { height: 56px; font-size: 11px !important; border: 0; background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 12px; font-weight: 600; color: var(--muted); border-radius: 12px; }
 .tab[aria-current="page"] { color: var(--accent); }
 
 /* Pieces */
@@ -177,3 +177,25 @@ textarea.input { padding: 10px 12px; min-height: 80px; resize: vertical; }
   .topbar { padding-top: 28px; }
   .topbar h1 { font-size: 32px; }
 }
+
+/* v1.2 additions */
+.addbtn { background: var(--accent); color: var(--accent-ink); border-radius: 14px; }
+.addbtn:hover { background: var(--accent); filter: brightness(1.08); }
+.section-h { margin: 8px 0 0; font-size: 16px; font-weight: 650; }
+.btn.primary-soft { background: var(--paid-bg); color: var(--paid-fg); border-color: transparent; }
+.check[disabled] { opacity: .4; cursor: default; }
+.logrow { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.legend { display: flex; gap: 16px; color: var(--muted); }
+.legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.sw.in, .hist2 .b.in { background: var(--accent); }
+.sw.out, .hist2 .b.out { background: #E08A4F; }
+.hist2 { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; height: 150px; }
+.hist2 .col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; font-size: 11px; color: var(--muted); min-height: 0; }
+.hist2 .col.cur span { color: var(--ink); font-weight: 650; }
+.hist2 .pair { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 3px; min-height: 0; }
+.hist2 .b { width: 40%; max-width: 16px; border-radius: 4px 4px 1px 1px; min-height: 2px; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
+.tbl th, .tbl td { padding: 8px 4px; border-top: 1px solid var(--line-2); text-align: right; }
+.tbl th:first-child { text-align: left; font-weight: 500; }
+.tbl thead th { border-top: 0; color: var(--muted); font-size: 12px; font-weight: 600; }
+.topbar-row h1 { flex: 1; }

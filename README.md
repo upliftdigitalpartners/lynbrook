@@ -1,6 +1,6 @@
 # Evergreen House
 
-A rent and bill tracker for a house, built as an installable web app (PWA).
+A rent, bill and home-upkeep tracker for a two-family house, built as an installable web app (PWA).
 
 - **App:** https://upliftdigitalpartners.github.io/lynbrook/
 - **Hosting:** GitHub Pages (static files in this repo, no build step)
@@ -10,8 +10,10 @@ A rent and bill tracker for a house, built as an installable web app (PWA).
 - Monthly list of bills with one-tap “paid”, amount and due day per month
 - Floors (whole house / 1st / 2nd) and categories, with filters and totals
 - Bill details: account #, autopay, payment website, notes, payment method, confirmation #, bill photo or receipt
-- Summary: paid per month, by floor, by category, year to date
-- Push reminders before the due date, on the day, and the day after if unpaid
+- Rent: tenants per floor, rent received (full or partial), grace period and late status, lease end alerts, text/call the tenant
+- Upkeep: recurring maintenance tasks that reschedule themselves when marked done, one-off repair log with costs and contractors
+- Summary: rent in vs. bills + upkeep out, net per month, bills by floor and category
+- Push reminders for bills, late rent and upcoming upkeep
 - Add all due dates to your phone calendar (.ics) and export history (CSV)
 - Works offline: changes made offline sync when you’re back online
 - Installs to the Home Screen on iPhone and Android
@@ -29,7 +31,7 @@ behind row-level security: only signed-in members of a household can read or cha
 | `sw.js` | Service worker: offline cache and push notifications |
 | `manifest.webmanifest`, `icons/` | Install metadata and icons |
 | `vendor/` | Supabase JS client (v2.45.4), bundled so the app works offline |
-| `supabase/migrations/` | Database schema and security rules |
+| `supabase/migrations/` | Database schema and security rules (`001` bills, `002` rent & upkeep) |
 | `supabase/functions/send-reminders/` | Edge function that sends reminders; run hourly by `pg_cron` |
 
 ## Getting in
