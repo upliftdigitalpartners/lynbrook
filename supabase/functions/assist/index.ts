@@ -29,15 +29,55 @@ async function pick(preferred: string, prefs: RegExp[]): Promise<string> {
   return preferred;
 }
 
-async function chat(model: string, messages: unknown[], asJson: boolean, maxTokens = 900) {
+class GroqError extends Error { constructor(public status: number, msg: string) { super(msg); } }
+async function chatOnce(model: string, messages: unknown[], asJson: boolean, maxTokens: number) {
   const body: Record<string, unknown> = { model, messages, temperature: 0.1, max_completion_tokens: maxTokens };
   if (asJson) body.response_format = { type: 'json_object' };
+  if (/gpt-oss/.test(model)) body.reasoning_effort = 'low'; // short thinking so the answer fits in the reply budget
   const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST', headers: { Authorization: `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
   const out = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(`Groq ${r.status}: ${String(out?.error?.message ?? '').slice(0, 200)}`);
-  return String(out.choices?.[0]?.message?.content ?? '');
+  if (!r.ok) throw new GroqError(r.status, `Groq ${r.status}: ${String(out?.error?.message ?? '').slice(0, 200)}`);
+  const text = String(out.choices?.[0]?.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  if (!text) throw new GroqError(502, 'Empty reply');
+  return text;
+}
+// Free Groq plans cap tokens per minute per model. When one model is over its limit (413/429) or down (5xx),
+// try the next available model, which has its own separate limit.
+const TEXT_FALLBACKS = [/gpt-oss-120b/, /llama-3\.3-70b/, /qwen3-32b/, /gpt-oss-20b/, /llama-3\.1-8b/];
+let lastModel = '';
+async function chat(model: string, messages: unknown[], asJson: boolean, maxTokens = 900) {
+  const ids = await models();
+  const chain = [model];
+  if (!/vision|qwen3\.8|llama-4/.test(model)) for (const re of TEXT_FALLBACKS) { const hit = ids.find((id) => re.test(id) && !/guard|safeguard/.test(id)); if (hit && !chain.includes(hit)) chain.push(hit); }
+  let last: unknown = null;
+  for (const m of chain.slice(0, 5)) {
+    try { const out = await chatOnce(m, messages, asJson, maxTokens); lastModel = m; return out; }
+    catch (e) { last = e; if (!(e instanceof GroqError) || !(e.status === 413 || e.status === 429 || e.status >= 500 || e.status === 404 || e.status === 400 && /json|response_format/i.test(e.message))) throw e; console.warn('fallback after', m, e.message); }
+  }
+  if (last instanceof GroqError && (last.status === 413 || last.status === 429)) throw new Error('BUSY');
+  throw last;
+}
+// Keep requests well under the free-plan per-minute token limit (~8k tokens).
+function fit(ctx: unknown, maxChars: number): string {
+  let s = JSON.stringify(ctx ?? {});
+  if (s.length <= maxChars) return s;
+  const c = JSON.parse(s);
+  // Trim the longest arrays and month maps first, keeping the most recent entries.
+  for (let round = 0; round < 12 && s.length > maxChars; round++) {
+    const walk = (o: any) => {
+      if (!o || typeof o !== 'object') return;
+      for (const k of Object.keys(o)) {
+        const v = o[k];
+        if (Array.isArray(v) && v.length > 4) o[k] = v.slice(0, Math.ceil(v.length * 0.6));
+        else if (v && typeof v === 'object' && /^\d{4}-\d{2}$/.test(Object.keys(v)[0] ?? '')) { const ks = Object.keys(v).sort(); if (ks.length > 3) for (const x of ks.slice(0, Math.floor(ks.length * 0.4))) delete v[x]; }
+        else walk(v);
+      }
+    };
+    walk(c); s = JSON.stringify(c);
+  }
+  return s.slice(0, maxChars);
 }
 function parseJson(s: string) {
   try { return JSON.parse(s); } catch { const m = s.match(/\{[\s\S]*\}/); if (m) { try { return JSON.parse(m[0]); } catch { /* fallthrough */ } } }
@@ -100,31 +140,31 @@ Deno.serve(async (req) => {
       const model = await pick(TEXT_MODEL, [/gpt-oss-120b/, /gpt-oss/, /qwen/, /llama/]);
       const out = await chat(model, [
         { role: 'system', content: PARSE_PROMPT.replace('{TODAY}', today) },
-        { role: 'user', content: 'Household data:\n' + JSON.stringify(body.context ?? {}).slice(0, 12000) + '\n\nNote: ' + text },
+        { role: 'user', content: 'Household data:\n' + fit(body.context, 8000) + '\n\nNote: ' + text },
       ], true);
       const j = parseJson(out);
       if (!j) return json({ error: 'Couldn’t understand that. Try rephrasing.' }, 422);
-      return json({ actions: Array.isArray(j.actions) ? j.actions.slice(0, 8) : [], note: j.note ?? null, model });
+      return json({ actions: Array.isArray(j.actions) ? j.actions.slice(0, 8) : [], note: j.note ?? null, model: lastModel || model });
     }
     if (body.mode === 'ask') {
       const q = String(body.question ?? '').slice(0, 600).trim();
       if (!q) return json({ error: 'Ask a question.' }, 400);
       const model = await pick(TEXT_MODEL, [/gpt-oss-120b/, /gpt-oss/, /qwen/, /llama/]);
-      const history = (Array.isArray(body.history) ? body.history : []).slice(-6).map((m: { role: string; content: string }) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content).slice(0, 1500) }));
+      const history = (Array.isArray(body.history) ? body.history : []).slice(-4).map((m: { role: string; content: string }) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content).slice(0, 800) }));
       const answer = await chat(model, [
-        { role: 'system', content: ASK_PROMPT.replace('{TODAY}', today) + '\n\nHousehold data (JSON):\n' + JSON.stringify(body.context ?? {}).slice(0, 60000) },
+        { role: 'system', content: ASK_PROMPT.replace('{TODAY}', today) + '\n\nHousehold data (JSON):\n' + fit(body.context, 10000) },
         ...history,
         { role: 'user', content: q },
       ], false, 700);
-      return json({ answer: answer.trim(), model });
+      return json({ answer: answer.trim(), model: lastModel || model });
     }
     if (body.mode === 'explain' || body.mode === 'recap') {
       const model = await pick(TEXT_MODEL, [/gpt-oss-120b/, /gpt-oss/, /qwen/, /llama/]);
       const prompt = (body.mode === 'explain' ? EXPLAIN_PROMPT : RECAP_PROMPT).replace('{TODAY}', today);
-      const out = await chat(model, [{ role: 'system', content: prompt }, { role: 'user', content: JSON.stringify(body.context ?? {}).slice(0, 30000) }], true, 700);
+      const out = await chat(model, [{ role: 'system', content: prompt }, { role: 'user', content: fit(body.context, 8000) }], true, 700);
       const j = parseJson(out);
       if (!j) return json({ error: 'Couldn’t put that together. Try again.' }, 422);
-      return json(Object.assign(j, { model }));
+      return json(Object.assign(j, { model: lastModel || model }));
     }
     if (body.mode === 'receipt') {
       const b64 = String(body.image ?? ''); const type = String(body.type ?? 'image/jpeg');
@@ -146,6 +186,7 @@ Deno.serve(async (req) => {
     return json({ error: 'Unknown mode' }, 400);
   } catch (e) {
     console.error(e);
+    if ((e as Error).message === 'BUSY') return json({ error: 'The AI is busy right now (free plan limit). Try again in a minute.', busy: true }, 429);
     return json({ error: 'The assistant is unavailable right now. ' + (e as Error).message }, 502);
   }
 });
