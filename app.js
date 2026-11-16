@@ -348,6 +348,202 @@
     if (prov && prov.length > 2) { const hit = live.filter((b) => b.name.toLowerCase().includes(prov)); if (hit.length === 1) return hit[0]; }
     return null;
   }
+  async function assist(body) {
+    if (!navigator.onLine) throw new Error('Connect to the internet first.');
+    const { data } = await sb.auth.getSession();
+    const r = await fetch(CFG.SUPABASE_URL + '/functions/v1/assist', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session.access_token, apikey: CFG.SUPABASE_ANON_KEY }, body: JSON.stringify(Object.assign({ today: isoDate(today()) }, body)) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'The assistant is unavailable.');
+    return j;
+  }
+
+  // ===== #1 Quick add =====
+  function quickContext() {
+    return {
+      bills: S.bills.filter((b) => b.active !== false).map((b) => ({ id: b.id, name: billTitle(b), unit: unitName(b.unit_id), category: b.category, due_day: b.due_day })),
+      rentals: S.rentals.filter((r) => r.active !== false).map((r) => ({ id: r.id, tenant: r.tenant_name || null, unit: unitName(r.unit_id), rent: r.rent_amount })),
+      tasks: S.tasks.filter((t) => t.active !== false).map((t) => ({ id: t.id, title: t.title, unit: unitName(t.unit_id) })),
+      units: S.units.map((u) => ({ id: u.id, name: u.name })), contractors: S.contractors.map((c) => c.name)
+    };
+  }
+  function describeAction(a) {
+    const b = a.bill_id && S.bills.find((x) => x.id === a.bill_id), r = a.rental_id && S.rentals.find((x) => x.id === a.rental_id), t = a.task_id && S.tasks.find((x) => x.id === a.task_id);
+    const d = (x) => x ? fmtDay(fromIso(x)) : 'today';
+    if (a.type === 'bill_paid' && b) return { ok: true, text: `Mark <strong>${esc(billTitle(b))}</strong> (${esc(unitName(b.unit_id))}) paid${a.amount != null ? ' · ' + money(a.amount) : ''} · ${d(a.date)}` };
+    if (a.type === 'bill_amount' && b) return { ok: true, text: `Set <strong>${esc(billTitle(b))}</strong> (${esc(unitName(b.unit_id))}) to ${money(a.amount)}${a.due_date ? ' · due ' + d(a.due_date) : ''}` };
+    if (a.type === 'rent_received' && r) return { ok: true, text: `Rent from <strong>${esc(rentalTitle(r))}</strong>${a.amount != null ? ' · ' + money(a.amount) : ' · full amount'} · ${d(a.date)}${a.method ? ' · ' + esc(a.method) : ''}` };
+    if (a.type === 'task_done' && t) return { ok: true, text: `Done: <strong>${esc(t.title)}</strong> · ${d(a.date)}${a.cost != null ? ' · ' + money(a.cost) : ''}${a.vendor ? ' · ' + esc(a.vendor) : ''}` };
+    if (a.type === 'repair' && a.title) return { ok: true, text: `Log repair: <strong>${esc(a.title)}</strong> · ${d(a.date)}${a.cost != null ? ' · ' + money(a.cost) : ''}${a.vendor ? ' · ' + esc(a.vendor) : ''}` };
+    return { ok: false, text: 'Couldn’t match one item' };
+  }
+  function applyAction(a) {
+    const iso = a.date || isoDate(today());
+    const at = (x) => new Date((x || iso) + 'T12:00:00').toISOString();
+    if (a.type === 'bill_paid') { const b = S.bills.find((x) => x.id === a.bill_id); if (!b) return; const k = monthKey(fromIso(iso)); const pay = getPay(b, k); savePayment(b, k, { paid_at: at(), amount: a.amount != null ? a.amount : amountFor(b, pay) }); }
+    else if (a.type === 'bill_amount') { const b = S.bills.find((x) => x.id === a.bill_id); if (!b) return; const k = a.due_date ? monthKey(fromIso(a.due_date)) : S.month; savePayment(b, k, { amount: a.amount }); if (a.due_date && !b.due_day) saveBill(Object.assign({}, b, { due_day: +a.due_date.slice(8, 10) })); }
+    else if (a.type === 'rent_received') {
+      const r = S.rentals.find((x) => x.id === a.rental_id); if (!r) return; const k = monthKey(fromIso(iso)); const rp = getRentPay(r, k); const due = rentDue(r, rp);
+      const add = a.amount != null ? a.amount : Math.max(0, (due || 0) - Number((rp && rp.amount_received) || 0));
+      saveRentPay(r, k, { amount_due: due, amount_received: Math.round((Number((rp && rp.amount_received) || 0) + add) * 100) / 100, received_at: at(), method: a.method || (rp && rp.method) || null });
+    } else if (a.type === 'task_done') {
+      const t = S.tasks.find((x) => x.id === a.task_id); if (!t) return;
+      saveLog({ id: uuid(), household_id: S.household.id, task_id: t.id, unit_id: t.unit_id, title: t.title, done_on: iso, cost: a.cost != null ? a.cost : null, vendor: a.vendor || null, notes: null, receipt_path: null, created_at: new Date().toISOString() });
+      const nt = Object.assign({}, t, { last_done: iso, vendor: a.vendor || t.vendor });
+      if (t.interval_months) nt.next_due = addMonthsIso(iso, t.interval_months); else { nt.next_due = null; nt.active = false; }
+      saveTask(nt);
+    } else if (a.type === 'repair') {
+      saveLog({ id: uuid(), household_id: S.household.id, task_id: null, unit_id: a.unit_id && S.units.some((u) => u.id === a.unit_id) ? a.unit_id : wholeId(), title: String(a.title).slice(0, 120), done_on: iso, cost: a.cost != null ? a.cost : null, vendor: a.vendor || null, notes: null, receipt_path: null, created_at: new Date().toISOString() });
+    }
+  }
+  function quickCard() {
+    const q = S.quick || {};
+    const acts = (q.actions || []).map(describeAction);
+    const okCount = acts.filter((x) => x.ok).length;
+    const mic = ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) ? `<button type="button" class="iconbtn micbtn${S.listening ? ' on' : ''}" data-act="mic" aria-label="${S.listening ? 'Stop listening' : 'Speak instead of typing'}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>` : '';
+    return `<section class="quick" aria-label="Quick add">
+      <form class="row" data-form="quick" style="gap:6px">
+        <label for="qa-text" class="sr">Quick add</label>
+        <input class="input" id="qa-text" name="text" placeholder="e.g. paid PSEG 2nd floor $96 yesterday" value="${esc(q.text || '')}" autocomplete="off" enterkeyhint="go" style="flex:1">
+        ${mic}<button class="btn primary-soft" type="submit" ${q.busy ? 'disabled' : ''}>${q.busy ? '…' : 'Add'}</button>
+      </form>
+      ${q.error ? `<p class="err">${esc(q.error)}</p>` : ''}
+      ${q.actions ? `<div class="quick-confirm">
+        ${acts.length ? `<ul class="quick-list">${acts.map((x) => `<li class="${x.ok ? '' : 'bad'}">${x.text}</li>`).join('')}</ul>` : ''}
+        ${q.note ? `<p class="small muted">${esc(q.note)}</p>` : ''}
+        <div class="btns">${okCount ? `<button class="btn primary-soft" data-act="quick-apply" style="flex:1">Save ${okCount === 1 ? 'it' : 'all ' + okCount}</button>` : ''}<button class="btn" data-act="quick-cancel" style="flex:1">${okCount ? 'Cancel' : 'OK'}</button></div>
+      </div>` : ''}
+    </section>`;
+  }
+
+  // ===== #2 Ask your house =====
+  function askContext() {
+    const out = { today: isoDate(today()), places: S.units.map((u) => ({ name: u.name, home_not_rental: !!u.exclude_from_tax })), bills: [], rent: [], upkeep_log: [], upkeep_tasks: [], appliances: [], mortgage: null };
+    S.bills.filter((b) => b.active !== false).forEach((b) => {
+      const months = {};
+      Object.values(S.payments).filter((p) => p.bill_id === b.id).sort((x, y) => x.period.localeCompare(y.period)).forEach((p) => { months[p.period.slice(0, 7)] = { amount: amountFor(b, p), paid: p.paid_at ? p.paid_at.slice(0, 10) : null }; });
+      out.bills.push({ name: billTitle(b), place: unitName(b.unit_id), category: b.category, due_day: b.due_day, fixed: b.amount_type === 'fixed', escrow: !!b.escrow, autopay: !!b.autopay, months });
+    });
+    S.rentals.forEach((r) => {
+      const months = {};
+      Object.values(S.rentPays).filter((p) => p.rental_id === r.id).sort((x, y) => x.period.localeCompare(y.period)).forEach((p) => { months[p.period.slice(0, 7)] = { due: p.amount_due, received: p.amount_received, on: p.received_at ? p.received_at.slice(0, 10) : null, method: p.method }; });
+      out.rent.push({ tenant: r.tenant_name, place: unitName(r.unit_id), rent: r.rent_amount, due_day: r.due_day, grace_days: r.grace_days, lease_start: r.lease_start, lease_end: r.lease_end, deposit: r.deposit, active: r.active !== false, months });
+    });
+    S.logs.slice(0, 200).forEach((l) => out.upkeep_log.push({ title: l.title, date: l.done_on, cost: l.cost, vendor: l.vendor, place: unitName(l.unit_id) }));
+    S.tasks.filter((t) => t.active !== false).forEach((t) => out.upkeep_tasks.push({ title: t.title, every_months: t.interval_months, last_done: t.last_done, next_due: t.next_due }));
+    S.appliances.forEach((a) => out.appliances.push({ name: a.name, kind: a.kind, brand: a.brand, installed: a.installed_on, warranty_until: a.warranty_until, place: unitName(a.unit_id) }));
+    const m = S.bills.find((b) => b.category === 'Mortgage' && b.active !== false);
+    if (m) out.mortgage = { name: m.name, balance: m.loan_balance, rate_pct: m.loan_rate, home_value: m.home_value, monthly: m.default_amount };
+    return out;
+  }
+  const ASK_SUGGEST = ['How much did gas cost last winter?', 'Which tenant paid late most often?', 'What did I spend on repairs this year?', 'When was the boiler last serviced?', 'What’s coming due in the next 2 weeks?'];
+  function askSheet() {
+    const log = S.askLog || [];
+    return `<div class="sheet-bg" data-act="sheet-close-bg"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <div class="grabber" aria-hidden="true"></div>
+      <div class="sheet-head"><h2 id="sheet-title" class="display">Ask about your house</h2><button class="iconbtn" data-act="sheet-close" aria-label="Close">${ICON.close}</button></div>
+      <div class="chat" aria-live="polite">
+        ${log.length ? log.map((m) => `<div class="msg ${m.role}">${m.role === 'assistant' ? esc(m.content).replace(/\n/g, '<br>') : esc(m.content)}</div>`).join('') : `<p class="small muted">Answers come from your own records in this app (bills, rent, repairs, upkeep, mortgage). Account numbers, phone numbers and emails aren’t sent.</p>
+          <div class="btns">${ASK_SUGGEST.map((q) => `<button type="button" class="chip" data-act="ask-suggest" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>`}
+        ${S.askBusy ? '<div class="msg assistant typing" aria-label="Thinking"><span></span><span></span><span></span></div>' : ''}
+      </div>
+      <form class="row" data-form="ask" style="gap:6px;position:sticky;bottom:0;background:var(--bg);padding-top:8px">
+        <label for="ask-q" class="sr">Your question</label>
+        <input class="input" id="ask-q" name="q" placeholder="Ask anything about your house" autocomplete="off" enterkeyhint="send" style="flex:1">
+        <button class="btn primary-soft" type="submit" ${S.askBusy ? 'disabled' : ''}>Ask</button>
+      </form>
+      <p class="small muted">AI can make mistakes. Check important numbers in the app.</p>
+    </div></div>`;
+  }
+  async function askQuestion(q) {
+    S.askLog = (S.askLog || []).concat({ role: 'user', content: q }); S.askBusy = true; render();
+    try {
+      const j = await assist({ mode: 'ask', question: q, history: S.askLog.slice(0, -1), context: askContext() });
+      S.askLog = S.askLog.concat({ role: 'assistant', content: j.answer || 'No answer.' });
+    } catch (e) { S.askLog = S.askLog.concat({ role: 'assistant', content: 'Sorry, ' + e.message }); }
+    S.askBusy = false; render();
+    const c = document.querySelector('.sheet'); if (c) c.scrollTop = c.scrollHeight;
+  }
+
+  // ===== #3 Snap a receipt =====
+  async function scanReceipt(file) {
+    if (!file) return;
+    toast('Reading the receipt…');
+    const image = await shrinkImage(file, 1600);
+    if (!image) return toast('Couldn’t open that photo.');
+    let x;
+    try { x = await assist({ mode: 'receipt', image, type: 'image/jpeg' }); } catch (e) { return toast(e.message); }
+    if (x.total == null && !x.vendor) return toast('Couldn’t read that receipt. Try a flatter, brighter photo.');
+    S.receiptDraft = { file, title: x.summary || (x.vendor ? 'Purchase at ' + x.vendor : 'Repair'), done_on: x.date || isoDate(today()), cost: x.total, vendor: x.vendor, confidence: x.confidence };
+    S.tab = 'upkeep'; S.upkeepView = 'history'; openSheet('new-log');
+    toast('Check the details and save.');
+  }
+
+  // ===== #14 Payoff planner =====
+  function amort(B, rPct, P) {
+    const r = rPct / 1200;
+    if (!(B > 0) || !(P > 0)) return null;
+    if (r === 0) return { n: Math.ceil(B / P), interest: 0 };
+    if (P <= B * r) return { n: Infinity, interest: Infinity };
+    const n = -Math.log(1 - (r * B) / P) / Math.log(1 + r);
+    const months = Math.ceil(n);
+    return { n: months, interest: Math.max(0, months * P - B) };
+  }
+  function payment(B, rPct, n) { const r = rPct / 1200; return r === 0 ? B / n : (B * r) / (1 - Math.pow(1 + r, -n)); }
+  function plusMonths(n) { const d = new Date(); d.setMonth(d.getMonth() + n); return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }); }
+  function yrsMo(n) { const y = Math.floor(n / 12), m = n % 12; return (y ? y + ' yr' + (y > 1 ? 's' : '') : '') + (y && m ? ' ' : '') + (m ? m + ' mo' : (y ? '' : '0 mo')); }
+  function payoffSheet() {
+    const m = S.bills.find((b) => b.category === 'Mortgage' && b.active !== false) || {};
+    const latest = Object.values(S.payments).filter((p) => p.bill_id === m.id && (p.principal != null || p.balance_after != null)).sort((x, y) => y.period.localeCompare(x.period))[0];
+    const P0 = S.payoff || {};
+    const B = P0.B != null ? P0.B : (latest && latest.balance_after != null ? Number(latest.balance_after) : (m.loan_balance != null ? Number(m.loan_balance) : null));
+    const R = P0.R != null ? P0.R : (m.loan_rate != null ? Number(m.loan_rate) : null);
+    const PI = P0.PI != null ? P0.PI : (latest && latest.principal != null && latest.interest != null ? Number(latest.principal) + Number(latest.interest) : null);
+    const E = P0.E || 0, L = P0.L || 0, NR = P0.NR != null ? P0.NR : null, CC = P0.CC != null ? P0.CC : null, NT = P0.NT || 30;
+    const base = B && R != null && PI ? amort(B, R, PI) : null;
+    const plan = base ? amort(Math.max(0, B - L), R, PI + E) : null;
+    let results = '<p class="notice info">Enter the loan balance, rate and the principal + interest part of your monthly payment (from your Rocket statement, not counting escrow).</p>';
+    if (base && base.n === Infinity) results = '<p class="notice">That payment doesn’t cover the interest. Check the numbers.</p>';
+    else if (base && plan) {
+      const saved = base.interest - plan.interest, sooner = base.n - plan.n;
+      results = `<div class="grid2">
+        <div class="stat"><span class="small muted">Paid off now</span><span class="v display">${plusMonths(base.n)}</span><span class="small muted">${yrsMo(base.n)} · interest ${money0(base.interest)}</span></div>
+        <div class="stat"><span class="small muted">With your extra</span><span class="v display">${plusMonths(plan.n)}</span><span class="small muted">${yrsMo(plan.n)} · interest ${money0(plan.interest)}</span></div>
+      </div>
+      ${E || L ? `<p class="ok">You’d save <strong>${money0(saved)}</strong> in interest and finish <strong>${yrsMo(sooner)}</strong> sooner.</p>` : '<p class="small muted">Add an extra monthly amount or a lump sum to see the savings.</p>'}`;
+    }
+    let refi = '';
+    if (B && PI && NR != null && NR > 0) {
+      const newP = payment(B, NR, NT * 12);
+      const diff = PI - newP;
+      const nb = base && base.n !== Infinity ? base : null;
+      const newInterest = newP * NT * 12 - B + (CC || 0);
+      refi = `<div class="grid2">
+        <div class="stat"><span class="small muted">New P&amp;I</span><span class="v display num">${money(newP)}</span><span class="small muted">${diff >= 0 ? money(diff) + ' less' : money(-diff) + ' more'} a month</span></div>
+        <div class="stat"><span class="small muted">Break-even</span><span class="v display">${diff > 0 && CC ? Math.ceil(CC / diff) + ' mo' : diff > 0 ? 'Right away' : 'Never'}</span><span class="small muted">${diff > 0 && CC ? 'to recover ' + money0(CC) + ' costs' : ''}</span></div>
+      </div>
+      ${nb ? `<p class="small">Total interest + costs: <strong>${money0(newInterest)}</strong> over ${NT} years vs <strong>${money0(nb.interest)}</strong> left on your current loan.${newInterest > nb.interest ? ' Lower payment, but more interest overall.' : ''}</p>` : ''}`;
+    }
+    const nInp = (id, k, v, ph, extra) => `<input class="input num" id="${id}" inputmode="decimal" placeholder="${ph}" value="${v == null ? '' : v}" data-change="payoff" data-k="${k}" ${extra || ''}>`;
+    return `<div class="sheet-bg" data-act="sheet-close-bg"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <div class="grabber" aria-hidden="true"></div>
+      <div class="sheet-head"><h2 id="sheet-title" class="display">Payoff planner</h2><button class="iconbtn" data-act="sheet-close" aria-label="Close">${ICON.close}</button></div>
+      <section class="card"><h2>Your loan today</h2>
+        <div class="grid2">${f('po-b', 'Balance ($)', nInp('po-b', 'B', B, '0'))}${f('po-r', 'Rate (%)', nInp('po-r', 'R', R, '6.25'))}</div>
+        ${f('po-pi', 'Monthly principal + interest ($)', nInp('po-pi', 'PI', PI != null ? Math.round(PI * 100) / 100 : null, 'not escrow'))}
+      </section>
+      <section class="card"><h2>Pay it off faster</h2>
+        <div class="grid2">${f('po-e', 'Extra each month ($)', nInp('po-e', 'E', E || null, '200'))}${f('po-l', 'One-time lump sum ($)', nInp('po-l', 'L', L || null, '5000'))}</div>
+        ${results}
+      </section>
+      <section class="card"><h2>Refinance check</h2>
+        <div class="grid2">${f('po-nr', 'New rate (%)', nInp('po-nr', 'NR', NR, '5.5'))}${f('po-cc', 'Closing costs ($)', nInp('po-cc', 'CC', CC, '6000'))}</div>
+        <div class="field"><span class="lab">New term</span><div class="seg">${[30, 20, 15].map((t) => `<button type="button" data-act="payoff-term" data-t="${t}" aria-pressed="${NT === t}">${t} years</button>`).join('')}</div></div>
+        ${refi || '<p class="small muted">Enter a new rate to compare.</p>'}
+      </section>
+      <p class="small muted">Estimates only. Ask Rocket Mortgage about prepayment rules and apply extra payments to principal.</p>
+    </div></div>`;
+  }
+
   async function scanBill(file) {
     if (!file) return;
     if (!navigator.onLine) return toast('Connect to the internet to scan.');
@@ -495,7 +691,14 @@
     }
     FX.sheetEnter = false;
   }
+  let rendering = false;
   function render() {
+    // A field losing focus while the screen is being replaced can fire 'change' and ask for another render mid-render
+    if (rendering) { renderSoon(); return; }
+    rendering = true;
+    try { renderNow(); } finally { rendering = false; }
+  }
+  function renderNow() {
     const app = document.getElementById('app');
     const y = window.scrollY;
     const ae = document.activeElement;
@@ -660,6 +863,7 @@
       ${ringHero('bills-' + S.month + '-' + S.unit, 'Still to pay', md.total - md.paid, md.total, pct, money(md.paid) + ' of ' + money(md.total) + ' paid', md.overdue ? md.overdue + ' overdue · ' + money(md.overdueAmt) : 'None overdue', md.overdue)}
       ${timeline(md)}
       ${md.setup ? `<p class="notice">${md.setup} ${md.setup === 1 ? 'bill needs' : 'bills need'} an amount or due day for ${monthLabel(S.month, true)}. Fill them in on the card.</p>` : ''}
+      ${quickCard()}
       <label class="btn block scanbtn"><input type="file" accept="image/*" capture="environment" class="sr" data-change="scan-bill"> ${ICON.camera} Scan a paper bill</label>
       <div class="chips" role="group" aria-label="Show floor">${unitChips}</div>
       <div class="seg" role="group" aria-label="Filter bills">${filt}</div>
@@ -865,7 +1069,7 @@
     if (S.upkeepView === 'docs') return nav + docsView();
     let body;
     if (S.upkeepView === 'history') {
-      body = S.logs.length ? `<ul class="bills">${S.logs.map(logCard).join('')}</ul>` : emptyState('tools', 'Nothing logged yet', 'Tap Done on a task, or log a repair, to build your house history.', '<button class="btn primary-soft" data-act="new-log">Log a repair</button>');
+      body = `<label class="btn block scanbtn"><input type="file" accept="image/*" capture="environment" class="sr" data-change="scan-receipt"> ${ICON.camera} Snap a receipt</label>` + (S.logs.length ? `<ul class="bills">${S.logs.map(logCard).join('')}</ul>` : emptyState('tools', 'Nothing logged yet', 'Tap Done on a task, or log a repair, to build your house history.', '<button class="btn primary-soft" data-act="new-log">Log a repair</button>'));
     } else {
       const sched = tasks.filter((x) => x.st.k !== 'setup');
       const un = tasks.filter((x) => x.st.k === 'setup');
@@ -1166,6 +1370,7 @@
           ${rows.slice().reverse().map((r) => `<tr><th scope="row">${monthLabel(r.k, true)}</th><td class="num">${money0(r.inc)}</td><td class="num">${money0(r.out)}</td><td class="num" style="color:${r.net < 0 ? 'var(--late-fg)' : 'inherit'}">${r.net < 0 ? '−' : ''}${money0(Math.abs(r.net))}</td></tr>`).join('')}
         </tbody></table>
       </section>
+      <button class="askcard" data-act="ask-open"><span class="askicon" aria-hidden="true">✦</span><span class="stack" style="gap:2px;text-align:left"><strong>Ask about your house</strong><span class="small muted">“What did I spend on repairs this year?”</span></span><span aria-hidden="true">›</span></button>
       ${forecastCard()}
       ${homeCard()}
       <section class="card" aria-label="Bills by place">
@@ -1346,7 +1551,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.3</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.4</p>`;
   }
 
   function importCard() {
@@ -1539,6 +1744,8 @@ function setup() {
     if (sh.type === 'inspections') return inspectionsSheet(sh);
     if (sh.type === 'inspection') return inspectionSheet();
     if (sh.type === 'request') return requestSheet(sh);
+    if (sh.type === 'ask') return askSheet();
+    if (sh.type === 'payoff') return payoffSheet();
     return '';
   }
   function portalUrl(r) { return CFG.APP_URL + 'tenant.html?t=' + r.portal_token; }
@@ -1732,6 +1939,7 @@ function setup() {
         <div class="grid2">${f('b-lbal', 'Loan balance ($)', moneyInp('b-lbal', 'loan_balance', b.loan_balance))}${f('b-rate', 'Interest rate (%)', inp('b-rate', 'loan_rate', b.loan_rate, 'inputmode="decimal" placeholder="e.g. 6.25"'))}</div>
         ${f('b-hval', 'Estimated home value ($)', moneyInp('b-hval', 'home_value', b.home_value))}
         <p class="small muted">The latest “Balance after” you enter replaces the loan balance. Home value is your own estimate, for equity.</p>
+        <button type="button" class="btn primary-soft" data-act="payoff-open">Open payoff planner</button>
       </section>`;
     const month = isNew ? (sc ? scanNote + `<section class="card"><h2>${monthLabel(S.month)}</h2>${f('p-amt', 'Amount ($)', moneyInp('p-amt', 'p_amount', amt))}</section>` : '') : scanNote + `<section class="card">
         <h2>${monthLabel(S.month)}</h2>
@@ -1839,13 +2047,15 @@ function setup() {
 
   function logSheet(sh) {
     const isNew = sh.type === 'new-log';
-    const l = isNew ? { unit_id: wholeId(), done_on: isoDate(today()) } : S.logs.find((x) => x.id === sh.id);
+    const rd = isNew ? S.receiptDraft : null;
+    const l = isNew ? Object.assign({ unit_id: wholeId(), done_on: isoDate(today()) }, rd ? { title: rd.title, done_on: rd.done_on, cost: rd.cost, vendor: rd.vendor } : {}) : S.logs.find((x) => x.id === sh.id);
     if (!l) return '';
-    return sheetShell(isNew ? 'Log a repair' : l.title, 'log', `<section class="card">
+    return sheetShell(isNew ? (rd ? 'From your receipt' : 'Log a repair') : l.title, 'log', `${rd ? `<p class="notice info">Read from your photo${rd.confidence && rd.confidence !== 'high' ? ' (' + esc(rd.confidence) + ' confidence)' : ''}. Check it before saving; the photo will be attached.</p>` : ''}<section class="card">
         ${f('l-title', 'What was done', inp('l-title', 'title', l.title, 'required placeholder="e.g. Fixed leaking kitchen faucet"'))}
         <div class="grid2">${f('l-date', 'Date', inp('l-date', 'done_on', l.done_on, 'type="date" required'))}${f('l-unit', 'Where', `<select class="input" id="l-unit" name="unit_id">${unitOptions(l.unit_id)}</select>`)}</div>
         <div class="grid2">${f('l-cost', 'Cost ($)', moneyInp('l-cost', 'cost', l.cost))}${f('l-vendor', 'Who did it', inp('l-vendor', 'vendor', l.vendor, 'list="pros-list"'))}</div>${vendorList()}
         ${f('l-notes', 'Notes', `<textarea class="input" id="l-notes" name="notes">${esc(l.notes)}</textarea>`)}
+        ${l.receipt_path ? `<button type="button" class="btn" data-act="file-open" data-path="${esc(l.receipt_path)}">View receipt</button>` : ''}
       </section>`, isNew ? null : 'Delete entry');
   }
 
@@ -1911,6 +2121,26 @@ function setup() {
       case 'contractor': openSheet('contractor', id); break;
       case 'doc': openSheet('doc', id); break;
       case 'receipt': { const r = S.rentals.find((x) => x.id === id); if (r) makeReceipt(r, S.month); break; }
+      case 'quick-cancel': S.quick = null; render(); break;
+      case 'quick-apply': {
+        const acts = (S.quick && S.quick.actions || []).filter((a) => describeAction(a).ok);
+        acts.forEach(applyAction); S.quick = null; render();
+        toast(acts.length === 1 ? 'Saved' : 'Saved ' + acts.length + ' items'); break;
+      }
+      case 'mic': {
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) break;
+        if (S.listening && window.__rec) { window.__rec.stop(); break; }
+        const rec = new SR(); window.__rec = rec; rec.lang = 'en-US'; rec.interimResults = true; rec.continuous = false;
+        S.listening = true; render();
+        rec.onresult = (ev) => { const t = Array.from(ev.results).map((r) => r[0].transcript).join(' '); const n = document.getElementById('qa-text'); if (n) n.value = t; S.quick = Object.assign({}, S.quick, { text: t }); };
+        rec.onend = () => { S.listening = false; render(); const n = document.getElementById('qa-text'); if (n && n.value.trim()) n.form.requestSubmit(); };
+        rec.onerror = () => { S.listening = false; render(); toast('Couldn’t hear that. Try typing.'); };
+        rec.start(); break;
+      }
+      case 'ask-open': S.sheet = { type: 'ask' }; FX.sheetEnter = true; render(); setTimeout(() => { const n = document.getElementById('ask-q'); if (n) n.focus(); }, 300); break;
+      case 'ask-suggest': askQuestion(el.dataset.q); break;
+      case 'payoff-open': S.sheet = { type: 'payoff' }; FX.sheetEnter = true; render(); break;
+      case 'payoff-term': S.payoff = Object.assign({}, S.payoff, { NT: +el.dataset.t }); render(); break;
       case 'renew': openSheet('renew', id); break;
       case 'moveout': openSheet('moveout', id); break;
       case 'inspections': openSheet('inspections', id); break;
@@ -2026,6 +2256,11 @@ function setup() {
     } else if (kind === 'insp-photo') {
       const i = +el.dataset.i; const file = el.files && el.files[0];
       if (file) uploadTo('inspections', file).then((path) => { if (path && S.inspDraft) { S.inspDraft.items[i].photos = (S.inspDraft.items[i].photos || []).concat(path); render(); toast('Photo added'); } });
+    } else if (kind === 'scan-receipt') {
+      scanReceipt(el.files && el.files[0]); el.value = '';
+    } else if (kind === 'payoff') {
+      const v = parseFloat(String(el.value).replace(/[$,%]/g, ''));
+      S.payoff = Object.assign({}, S.payoff, { [el.dataset.k]: isFinite(v) ? v : null }); render();
     } else if (kind === 'scan-bill') {
       scanBill(el.files && el.files[0]); el.value = '';
     } else if (kind === 'turnover') {
@@ -2132,7 +2367,10 @@ function setup() {
       const title = val('title');
       if (!title) return fail('Say what was done.');
       if (!val('done_on')) return fail('Pick a date.');
-      saveLog(Object.assign({}, l, { title, done_on: val('done_on'), unit_id: val('unit_id') || null, cost: num(val('cost')), vendor: val('vendor') || null, notes: val('notes') || null }));
+      const saved = Object.assign({}, l, { title, done_on: val('done_on'), unit_id: val('unit_id') || null, cost: num(val('cost')), vendor: val('vendor') || null, notes: val('notes') || null });
+      saveLog(saved);
+      const rd = isNew ? S.receiptDraft : null; S.receiptDraft = null;
+      if (rd && rd.file) uploadTo('receipts', rd.file).then((path) => { if (path) { saveLog(Object.assign({}, saved, { receipt_path: path })); renderSoon(); } });
       S.sheet = null; if (isNew) S.upkeepView = 'history'; render(); toast('Saved');
     } else if (kind === 'renew') {
       const r = S.rentals.find((x) => x.id === S.sheet.id);
@@ -2164,6 +2402,16 @@ function setup() {
       S.household.rental_pct = v;
       queue({ kind: 'update', table: 'households', row: { rental_pct: v }, match: { id: S.household.id } });
       render(); toast('Saved');
+    } else if (kind === 'quick') {
+      const text = val('text');
+      if (!text) return;
+      S.quick = { text, busy: true }; render();
+      try { const j = await assist({ mode: 'parse', text, context: quickContext() }); S.quick = { text, actions: j.actions || [], note: j.note || null }; }
+      catch (e) { S.quick = { text, error: e.message }; }
+      render();
+    } else if (kind === 'ask') {
+      const q = val('q'); if (!q || S.askBusy) return;
+      form.reset(); askQuestion(q);
     } else if (kind === 'appliance') {
       const isNew = S.sheet.type === 'new-appliance';
       const a = isNew ? { id: uuid(), household_id: S.household.id, created_at: new Date().toISOString() } : S.appliances.find((x) => x.id === S.sheet.id);

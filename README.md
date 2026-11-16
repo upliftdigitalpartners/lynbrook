@@ -19,6 +19,8 @@ A rent, bill and home-upkeep tracker for a two-family house, built as an install
 - Cash-flow forecast (next 3 months, rental vs home, tight-month warnings); year-over-year bill comparison with weather adjustment (Open-Meteo heating degree days)
 - Vacancy mode: days vacant, rent missed, turnover checklist; tenant page shows how to pay (Zelle)
 - Scan a paper bill: photo → Groq vision model, default `qwen/qwen3.8-27b`, auto-switches if Groq retires it (`scan-bill` function, needs the `GROQ_API_KEY` Supabase secret; optional `GROQ_VISION_MODEL`) → matched bill prefilled, photo attached
+- AI (Groq, via the `assist` function): quick add from typed or spoken notes (confirmed before saving), Ask about your house (answers from your own records, no account numbers sent), snap a receipt into the repair log
+- Mortgage payoff planner: extra monthly / lump sum savings and refinance break-even
 - Weather: twice-daily National Weather Service check for Lynbrook; freeze and storm/flood/wind/heat alerts push what to do and show as a banner; a freeze pulls the outdoor-faucet task forward
 - App icon badge: overdue bills + late rent + upkeep due + new repair requests
 - Alerts: bills 30%+ above usual (in app and on import), monthly summary on the 1st, document expiry and warranty end
@@ -46,6 +48,7 @@ behind row-level security: only signed-in members of a household can read or cha
 | `tenant.html`, `tenant.js` | Tenant page (no login; private link per tenant) |
 | `supabase/functions/tenant/` | API for the tenant page; notifies the household of new repair requests |
 | `supabase/functions/scan-bill/` | Reads a bill photo with Groq (vision) and returns provider, account, amount, due date |
+| `supabase/functions/assist/` | Groq helpers: parse quick-add notes, answer questions, read receipts |
 | `supabase/functions/weather/` | Daily NWS forecast/alerts check (pg_cron, 7:07 and 16:07 New York time) |
 | `supabase/functions/import-bill/` | Edge function that reads utility emails (`parse.ts`) and updates bills |
 
