@@ -76,9 +76,48 @@ async function runReminders() {
       const when = kind === 'soon' ? `due in ${diff} day${diff === 1 ? '' : 's'}` : kind === 'today' ? 'due today' : 'was due yesterday';
       lines.push(`${name} ${when}${amt ? ' · ' + money(Number(amt)) : ''}`);
     }
+    // Rent: on the due day, and the day after the grace period if not fully received
+    const { data: rentals } = await db.from('rentals').select('id,tenant_name,rent_amount,due_day,grace_days,unit_id,units(name)').eq('household_id', mem.household_id).eq('active', true);
+    const { data: rpays } = await db.from('rent_payments').select('rental_id,amount_due,amount_received').eq('household_id', mem.household_id).eq('period', period);
+    const rBy = new Map((rpays ?? []).map((p) => [p.rental_id, p]));
+    for (const r of rentals ?? []) {
+      if (!r.rent_amount) continue;
+      const rp = rBy.get(r.id);
+      const due = Number(rp?.amount_due ?? r.rent_amount);
+      if (Number(rp?.amount_received ?? 0) >= due) continue;
+      const dueDay = Math.min(r.due_day, daysInMonth);
+      const lateDay = dueDay + (r.grace_days ?? 0) + 1;
+      let kind = '';
+      if (now.d === dueDay) kind = 'rent-due';
+      else if (now.d === lateDay) kind = 'rent-late';
+      if (!kind) continue;
+      const key = `${r.id}:${period}:${kind}`;
+      const { error } = await db.from('reminder_log').insert({ payment_key: key, user_id: mem.user_id });
+      if (error) continue;
+      // deno-lint-ignore no-explicit-any
+      const who = r.tenant_name || (r as any).units?.name || 'tenant';
+      const left = due - Number(rp?.amount_received ?? 0);
+      lines.push(kind === 'rent-due' ? `Rent due today from ${who} · ${money(left)}` : `Rent from ${who} is late · ${money(left)} not received`);
+    }
+
+    // Upkeep: remind_days before, and on the day it's due
+    const todayIso = `${now.y}-${String(now.m).padStart(2, '0')}-${String(now.d).padStart(2, '0')}`;
+    const { data: tasks } = await db.from('maintenance_tasks').select('id,title,next_due').eq('household_id', mem.household_id).eq('active', true).not('next_due', 'is', null);
+    for (const t of tasks ?? []) {
+      const diff = Math.round((Date.parse(t.next_due + 'T00:00:00Z') - Date.parse(todayIso + 'T00:00:00Z')) / 86400000);
+      let kind = '';
+      if (diff === mem.remind_days && diff > 0) kind = 'soon';
+      else if (diff === 0) kind = 'today';
+      if (!kind) continue;
+      const key = `${t.id}:${t.next_due}:${kind}`;
+      const { error } = await db.from('reminder_log').insert({ payment_key: key, user_id: mem.user_id });
+      if (error) continue;
+      lines.push(kind === 'today' ? `Upkeep due today: ${t.title}` : `Upkeep in ${diff} day${diff === 1 ? '' : 's'}: ${t.title}`);
+    }
+
     if (!lines.length) continue;
     total += await push(mem.user_id, {
-      title: lines.length === 1 ? 'Bill reminder' : `${lines.length} bills need attention`,
+      title: lines.length === 1 ? 'House reminder' : `${lines.length} things need attention`,
       body: lines.join('\n'),
       tag: `bills-${period}-${now.d}`,
       url: './',

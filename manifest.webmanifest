@@ -1,7 +1,7 @@
 {
   "name": "Evergreen House",
   "short_name": "Evergreen",
-  "description": "Rent and bill tracker for 110 Evergreen Ave",
+  "description": "Rent, bills and upkeep for 110 Evergreen Ave",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
