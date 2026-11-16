@@ -16,6 +16,8 @@ A rent, bill and home-upkeep tracker for a two-family house, built as an install
 - Upkeep: recurring maintenance tasks that reschedule themselves when marked done, one-off repair log with costs and contractors
 - Summary: rent in vs. bills + upkeep out, net per month, bills by place and category; Schedule E–style tax report (PDF/CSV) with rental-use %
 - Mortgage: principal / interest / escrow per statement, balance, equity
+- Weather: twice-daily National Weather Service check for Lynbrook; freeze and storm/flood/wind/heat alerts push what to do and show as a banner; a freeze pulls the outdoor-faucet task forward
+- App icon badge: overdue bills + late rent + upkeep due + new repair requests
 - Alerts: bills 30%+ above usual (in app and on import), monthly summary on the 1st, document expiry and warranty end
 - Push reminders for bills, late rent and upcoming upkeep
 - Gmail bill import: a Google Apps Script (copied from Settings) sends PSEG, National Grid and Liberty emails to the `import-bill` function, which fills in amounts and due dates, marks bills paid from payment confirmations, and records Zelle rent payments (Chase alerts) against the matching tenant
@@ -40,6 +42,7 @@ behind row-level security: only signed-in members of a household can read or cha
 | `supabase/functions/send-reminders/` | Edge function that sends reminders; run hourly by `pg_cron` |
 | `tenant.html`, `tenant.js` | Tenant page (no login; private link per tenant) |
 | `supabase/functions/tenant/` | API for the tenant page; notifies the household of new repair requests |
+| `supabase/functions/weather/` | Daily NWS forecast/alerts check (pg_cron, 7:07 and 16:07 New York time) |
 | `supabase/functions/import-bill/` | Edge function that reads utility emails (`parse.ts`) and updates bills |
 
 ## Getting in
