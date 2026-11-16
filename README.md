@@ -14,7 +14,9 @@ A rent, bill and home-upkeep tracker for a two-family house, built as an install
 - Rent: tenants per floor, rent received (full or partial), grace period and late status, lease end alerts, text/call the tenant
 - House: appliances (age, warranty, model/serial, replace-soon alerts), contractors (call/text, job history), private documents with expiry alerts
 - Upkeep: recurring maintenance tasks that reschedule themselves when marked done, one-off repair log with costs and contractors
-- Summary: rent in vs. bills + upkeep out, net per month, bills by floor and category
+- Summary: rent in vs. bills + upkeep out, net per month, bills by place and category; Schedule E–style tax report (PDF/CSV) with rental-use %
+- Mortgage: principal / interest / escrow per statement, balance, equity
+- Alerts: bills 30%+ above usual (in app and on import), monthly summary on the 1st, document expiry and warranty end
 - Push reminders for bills, late rent and upcoming upkeep
 - Gmail bill import: a Google Apps Script (copied from Settings) sends PSEG, National Grid and Liberty emails to the `import-bill` function, which fills in amounts and due dates, marks bills paid from payment confirmations, and records Zelle rent payments (Chase alerts) against the matching tenant
 - Add all due dates to your phone calendar (.ics) and export history (CSV)

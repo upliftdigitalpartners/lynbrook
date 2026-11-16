@@ -2,6 +2,9 @@
 // Auth: the household's import_token (sent as x-import-token).
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 import { matchAccount, matchTenant, parseEmail, parseZelle } from './parse.ts';
+import webpush from 'npm:web-push@3.6.7';
+
+webpush.setVapidDetails(Deno.env.get('VAPID_SUBJECT') ?? 'mailto:reminders@example.com', Deno.env.get('VAPID_PUBLIC_KEY')!, Deno.env.get('VAPID_PRIVATE_KEY')!);
 
 const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 
@@ -11,6 +14,25 @@ const PROVIDER_NAMES: Record<string, RegExp> = {
   liberty: /liberty/i,
   rocket: /rocket/i,
 };
+
+
+// Warn the household when a bill is much higher than usual (30%+ and $20+ above the recent average)
+async function spikeCheck(householdId: string, bill: { id: string; name: string; label?: string | null; unit_id?: string | null }, period: string, amount: number) {
+  const { data: past } = await db.from('payments').select('period,amount').eq('bill_id', bill.id).lt('period', period).not('amount', 'is', null).order('period', { ascending: false }).limit(6);
+  const vals = (past ?? []).map((x) => Number(x.amount)).filter((n) => n > 0);
+  if (vals.length < 2) return;
+  const avg = vals.reduce((t, n) => t + n, 0) / vals.length;
+  if (!(amount > avg * 1.3 && amount - avg >= 20)) return;
+  const pct = Math.round((amount / avg - 1) * 100);
+  const { data: unit } = bill.unit_id ? await db.from('units').select('name').eq('id', bill.unit_id).maybeSingle() : { data: null };
+  const { data: members } = await db.from('household_members').select('user_id').eq('household_id', householdId);
+  const { data: subs } = await db.from('push_subscriptions').select('id,endpoint,p256dh,auth').in('user_id', (members ?? []).map((m) => m.user_id));
+  const payload = JSON.stringify({ title: 'Bill higher than usual', body: `${bill.name}${unit?.name ? ' · ' + unit.name : ''}: $${amount.toFixed(2)}, ${pct}% above the usual $${avg.toFixed(2)}. Worth a look (leak, thermostat, billing error?).`, tag: 'spike-' + bill.id + period, url: './' });
+  for (const s of subs ?? []) {
+    try { await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 86400 }); }
+    catch (e) { const c = (e as { statusCode?: number }).statusCode; if (c === 404 || c === 410) await db.from('push_subscriptions').delete().eq('id', s.id); }
+  }
+}
 
 type Msg = { id: string; from: string; subject: string; date: string; text: string };
 
@@ -26,7 +48,7 @@ Deno.serve(async (req) => {
   if (body.test) return Response.json({ ok: true, house: true });
   const messages = (body.messages ?? []).slice(0, 50);
 
-  const { data: bills } = await db.from('bills').select('id,name,account_number,due_day,amount_type').eq('household_id', house.id).eq('active', true);
+  const { data: bills } = await db.from('bills').select('id,name,label,unit_id,account_number,due_day,amount_type').eq('household_id', house.id).eq('active', true);
   const results: { id: string; status: string; detail?: string }[] = [];
 
   for (const m of messages) {
@@ -125,6 +147,7 @@ Deno.serve(async (req) => {
     if (error) { await done('unmatched', 'Save failed: ' + error.message, bill.id); continue; }
     if (p.dueDate && !bill.due_day) await db.from('bills').update({ due_day: +p.dueDate.slice(8, 10) }).eq('id', bill.id);
     await done('applied', [p.amount != null ? '$' + p.amount.toFixed(2) : null, p.dueDate ? 'due ' + p.dueDate : null].filter(Boolean).join(' · '), bill.id);
+    if (p.amount != null) await spikeCheck(house.id, bill, period, p.amount);
   }
 
   return Response.json({ ok: true, results });

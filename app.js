@@ -268,6 +268,15 @@
     rows.sort((a, c) => (a.due ? a.due.getTime() : 9e15) - (c.due ? c.due.getTime() : 9e15));
     return { rows, total, paid, overdue, overdueAmt, setup };
   }
+  // Higher than usual: 30%+ and $20+ above this bill's average over the previous 6 months
+  function spikeLabel(b, amt) {
+    if (amt == null || b.amount_type === 'fixed' || b.category === 'Mortgage') return '';
+    const vals = [];
+    for (let i = 1; i <= 6; i++) { const p = getPay(b, addMonths(S.month, -i)); if (p && p.amount != null && Number(p.amount) > 0) vals.push(Number(p.amount)); }
+    if (vals.length < 2) return '';
+    const avg = vals.reduce((t, n) => t + n, 0) / vals.length;
+    return amt > avg * 1.3 && amt - avg >= 20 ? '↑ ' + Math.round((amt / avg - 1) * 100) + '% vs usual ' + money0(avg) : '';
+  }
   function rentStatus(r, rp, period) {
     const due = rentDue(r, rp);
     const got = rp && rp.amount_received != null ? Number(rp.amount_received) : 0;
@@ -447,6 +456,7 @@
           <div class="row wrap" style="gap:6px"><span class="bill-name">${esc(billTitle(b))}</span><span class="tag">${esc(unit)}</span></div>
           ${b.account_number ? `<button class="acct" data-act="copy" data-text="${esc(b.account_number)}" aria-label="Copy account number ${esc(b.account_number)}">${esc(b.category)} · #<span class="num">${esc(b.account_number)}</span> ${ICON.copy}</button>` : `<span class="small muted">${esc(b.category)}</span>`}
           <span class="pill ${r.st.k}">${esc(r.st.label)}</span>
+          ${spikeLabel(b, r.amt) ? `<span class="pill late">${spikeLabel(b, r.amt)}</span>` : ''}
         </div>
       </div>
       ${editing ? `<div class="stack">
@@ -533,8 +543,24 @@
       ${mort.map((b) => { const p = getPay(b, S.month); const st = statusFor(b, p, S.month); const a = amountFor(b, p);
         return `<div class="row between wrap"><div class="stack" style="gap:2px"><strong>${esc(billTitle(b))}</strong><span class="pill ${st.k}" style="margin-top:0">${esc(st.label)}</span></div>
           <div class="row"><span class="display num" style="font-size:20px;font-weight:650">${a != null ? money(a) : '—'}</span><button class="btn" data-act="bill" data-id="${b.id}">Details</button></div></div>`; }).join('')}
-      <p class="small muted">Mark it paid on the Bills tab. Set the amount once as “Same amount every month”.</p>
+      ${mort.map(mortgageStats).join('')}
+      <p class="small muted">Mark it paid on the Bills tab. Add principal, interest and balance from each statement under Details for equity and tax totals.</p>
     </section>`;
+  }
+  function mortgageStats(b) {
+    const yr = S.month.slice(0, 4);
+    const pays = Object.values(S.payments).filter((p) => p.bill_id === b.id && p.period.startsWith(yr));
+    const sum = (k) => pays.reduce((t, p) => t + (Number(p[k]) || 0), 0);
+    const latest = Object.values(S.payments).filter((p) => p.bill_id === b.id && p.balance_after != null).sort((x, y) => y.period.localeCompare(x.period))[0];
+    const bal = latest ? Number(latest.balance_after) : (b.loan_balance != null ? Number(b.loan_balance) : null);
+    const eq = b.home_value != null && bal != null ? Number(b.home_value) - bal : null;
+    if (bal == null && !sum('interest') && !sum('principal')) return `<p class="small muted">Add the loan balance and rate under Details to see equity and interest paid.</p>`;
+    return `<div class="grid2">
+      <div class="stat"><span class="small muted">Loan balance</span><span class="v display num">${bal != null ? money0(bal) : '—'}</span>${b.loan_rate ? `<span class="small muted">${Number(b.loan_rate)}% rate</span>` : ''}</div>
+      <div class="stat"><span class="small muted">Estimated equity</span><span class="v display num">${eq != null ? money0(eq) : '—'}</span>${eq != null && b.home_value ? `<span class="small muted">${Math.round((eq / Number(b.home_value)) * 100)}% of ${money0(b.home_value)}</span>` : '<span class="small muted">Add home value</span>'}</div>
+      <div class="stat"><span class="small muted">Interest paid ${yr}</span><span class="v display num">${money0(sum('interest'))}</span></div>
+      <div class="stat"><span class="small muted">Principal paid ${yr}</span><span class="v display num">${money0(sum('principal'))}</span></div>
+    </div>`;
   }
 
   // ----- Upkeep tab -----
@@ -740,7 +766,101 @@
       <section class="card" aria-label="Bills by category">
         <h2>Bills by category · ${monthLabel(S.month, true)}</h2>
         ${byCat.map((g) => `<div class="row between small"><span>${esc(g.name)} <span class="muted">· ${g.n}</span></span><strong class="num">${money(g.total)}</strong></div>`).join('')}
-      </section>`;
+      </section>
+      ${taxCard()}`;
+  }
+
+  // ----- Tax report (Schedule E style) -----
+  const SCHED_E = [['3', 'Rents received'], ['7', 'Cleaning and maintenance'], ['9', 'Insurance'], ['12', 'Mortgage interest paid to banks'], ['14', 'Repairs'], ['16', 'Taxes'], ['17', 'Utilities'], ['19', 'Other']];
+  function lineForBill(cat) {
+    if (cat === 'Property tax') return '16';
+    if (cat === 'Insurance') return '9';
+    if (['Electric', 'Gas', 'Water', 'Trash', 'Internet & phone'].includes(cat)) return '17';
+    if (cat === 'Contractor') return '14';
+    return '19';
+  }
+  function taxYear(year) {
+    const yr = String(year);
+    const excluded = new Set(S.units.filter((u) => u.exclude_from_tax).map((u) => u.id));
+    const pct = (S.household && S.household.rental_pct != null ? S.household.rental_pct : 100) / 100;
+    const rows = []; // {line, item, place, date, amount}
+    Object.values(S.rentPays).forEach((p) => {
+      if (!p.period.startsWith(yr) || !(Number(p.amount_received) > 0)) return;
+      const r = S.rentals.find((x) => x.id === p.rental_id); if (!r || excluded.has(r.unit_id)) return;
+      rows.push({ line: '3', item: 'Rent · ' + rentalTitle(r), place: unitName(r.unit_id), date: p.received_at ? isoDate(new Date(p.received_at)) : p.period, amount: Number(p.amount_received), full: true });
+    });
+    let interestMissing = false;
+    Object.values(S.payments).forEach((p) => {
+      if (!p.period.startsWith(yr) || !p.paid_at) return;
+      const b = S.bills.find((x) => x.id === p.bill_id); if (!b || b.escrow || excluded.has(b.unit_id)) return;
+      if (b.category === 'Mortgage') {
+        if (p.interest != null) rows.push({ line: '12', item: billTitle(b) + ' interest', place: unitName(b.unit_id), date: isoDate(new Date(p.paid_at)), amount: Number(p.interest) });
+        else interestMissing = true;
+        return;
+      }
+      const amt = amountFor(b, p); if (!amt) return;
+      rows.push({ line: lineForBill(b.category), item: billTitle(b), place: unitName(b.unit_id), date: isoDate(new Date(p.paid_at)), amount: amt });
+    });
+    S.logs.forEach((l) => {
+      if (!(l.done_on || '').startsWith(yr) || !(Number(l.cost) > 0) || excluded.has(l.unit_id)) return;
+      const t = S.tasks.find((x) => x.id === l.task_id);
+      rows.push({ line: t && t.category === 'Cleaning' ? '7' : '14', item: l.title + (l.vendor ? ' · ' + l.vendor : ''), place: unitName(l.unit_id), date: l.done_on, amount: Number(l.cost) });
+    });
+    rows.forEach((r) => { r.deductible = r.line === '3' ? r.amount : Math.round(r.amount * pct * 100) / 100; });
+    const totals = {}; SCHED_E.forEach(([k]) => { totals[k] = 0; });
+    rows.forEach((r) => { totals[r.line] += r.deductible; });
+    const expenses = Object.keys(totals).filter((k) => k !== '3').reduce((t, k) => t + totals[k], 0);
+    return { yr, rows: rows.sort((a, b) => a.line.localeCompare(b.line, undefined, { numeric: true }) || a.date.localeCompare(b.date)), totals, expenses, net: totals['3'] - expenses, pct: Math.round(pct * 100), interestMissing, excluded: S.units.filter((u) => u.exclude_from_tax).map((u) => u.name) };
+  }
+  function taxCard() {
+    const y = S.taxYear || Number(S.month.slice(0, 4));
+    const t = taxYear(y);
+    return `<section class="card" aria-label="Tax report">
+      <div class="row between"><h2>Tax report · ${y}</h2>
+        <div class="monthnav"><button class="iconbtn" data-act="tax-year" data-delta="-1" aria-label="Previous year">${ICON.left}</button><button class="iconbtn" data-act="tax-year" data-delta="1" aria-label="Next year">${ICON.right}</button></div></div>
+      <p class="small muted">Rental income and expenses grouped like IRS Schedule E${t.excluded.length ? ', leaving out ' + esc(t.excluded.join(', ')) : ''}. Expenses are counted at ${t.pct}% rental use.</p>
+      <table class="tbl"><tbody>
+        ${SCHED_E.map(([k, l]) => `<tr><th scope="row">Line ${k} · ${l}</th><td class="num">${money(t.totals[k])}</td></tr>`).join('')}
+        <tr><th scope="row"><strong>Total expenses</strong></th><td class="num"><strong>${money(t.expenses)}</strong></td></tr>
+        <tr><th scope="row"><strong>Net before depreciation</strong></th><td class="num"><strong>${t.net < 0 ? '−' : ''}${money(Math.abs(t.net))}</strong></td></tr>
+      </tbody></table>
+      ${t.interestMissing ? '<p class="notice info">Mortgage interest isn’t entered for some months. Use the interest on Rocket Mortgage’s Form 1098, or add it per payment under the mortgage’s Details.</p>' : ''}
+      <form class="row" data-form="rental-pct" style="gap:8px;align-items:flex-end">
+        <div class="field" style="flex:1"><label for="tx-pct">Rental use (%)</label><input class="input" id="tx-pct" name="pct" type="number" inputmode="numeric" min="0" max="100" value="${t.pct}"></div>
+        <button class="btn" type="submit">Save</button>
+      </form>
+      <div class="btns"><button class="btn primary-soft" data-act="tax-pdf" style="flex:1">Download PDF</button><button class="btn" data-act="tax-csv" style="flex:1">Download CSV</button></div>
+      <p class="small muted">Not tax advice. Doesn’t include depreciation, escrowed taxes or insurance (see Form 1098), or mileage. Share it with your accountant.</p>
+    </section>`;
+  }
+  async function taxPDF() {
+    const t = taxYear(S.taxYear || Number(S.month.slice(0, 4)));
+    try { await loadScript('vendor/jspdf.umd.min.js'); } catch (_) { return toast('Couldn’t load the PDF maker.'); }
+    const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter' });
+    const L = 56; let y = 64;
+    const line = (txt, size, bold, x, align) => { doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(size || 10); doc.text(String(txt), x || L, y, align ? { align } : undefined); };
+    const next = (h) => { y += h || 16; if (y > 740) { doc.addPage(); y = 64; } };
+    line('Rental income & expenses · ' + t.yr, 18, true); next(20);
+    line((S.household.address || S.household.name) + ' · rental use ' + t.pct + '%' + (t.excluded.length ? ' · excludes ' + t.excluded.join(', ') : ''), 10); next(28);
+    SCHED_E.forEach(([k, l]) => { line('Line ' + k + ' · ' + l, 11); line(money(t.totals[k]), 11, false, 556, 'right'); next(); });
+    next(4); line('Total expenses', 11, true); line(money(t.expenses), 11, true, 556, 'right'); next();
+    line('Net before depreciation', 11, true); line((t.net < 0 ? '-' : '') + money(Math.abs(t.net)), 11, true, 556, 'right'); next(30);
+    line('Detail', 13, true); next(18);
+    t.rows.forEach((r) => { line(r.date, 9); line('L' + r.line, 9, false, L + 70); line(r.item.slice(0, 48), 9, false, L + 100); line(r.place, 9, false, L + 360); line(money(r.deductible), 9, false, 556, 'right'); next(13); });
+    next(16); doc.setTextColor(110);
+    line('Not tax advice. Excludes depreciation, escrowed taxes/insurance and mileage. Prepared with Evergreen House.', 8);
+    const blob = doc.output('blob'); const name = 'rental-tax-report-' + t.yr + '.pdf';
+    const file = new File([blob], name, { type: 'application/pdf' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: 'Rental tax report ' + t.yr }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
+    download(name, blob, 'application/pdf');
+  }
+  function taxCSV() {
+    const t = taxYear(S.taxYear || Number(S.month.slice(0, 4)));
+    const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const names = Object.fromEntries(SCHED_E);
+    const out = [['Date', 'Schedule E line', 'Line name', 'Item', 'Place', 'Amount', 'Counted (' + t.pct + '% rental use)']].concat(
+      t.rows.map((r) => [r.date, r.line, names[r.line], r.item, r.place, r.amount.toFixed(2), r.deductible.toFixed(2)]));
+    download('rental-tax-detail-' + t.yr + '.csv', out.map((r) => r.map(q).join(',')).join('\n'), 'text/csv');
   }
 
   // ----- Settings -----
@@ -809,7 +929,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v1.7</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v1.8</p>`;
   }
 
   function importCard() {
@@ -1150,11 +1270,21 @@ function setup() {
     const pay = isNew ? {} : (getPay(b, S.month) || {});
     const amt = isNew ? null : amountFor(b, pay);
     const paidDate = pay.paid_at ? isoDate(new Date(pay.paid_at)) : '';
+    const isMort = b.category === 'Mortgage';
+    const mortMonth = isNew || !isMort ? '' : `
+        <p class="lab small" style="margin:4px 0 0">From your monthly statement <span class="muted">(optional, for taxes and equity)</span></p>
+        <div class="grid2">${f('p-prin', 'Principal ($)', moneyInp('p-prin', 'p_principal', pay.principal))}${f('p-int', 'Interest ($)', moneyInp('p-int', 'p_interest', pay.interest))}</div>
+        <div class="grid2">${f('p-esc', 'Escrow ($)', moneyInp('p-esc', 'p_escrow', pay.escrow_part))}${f('p-bal', 'Balance after ($)', moneyInp('p-bal', 'p_balance', pay.balance_after))}</div>`;
+    const loan = !isMort ? '' : `<section class="card"><h2>Loan</h2>
+        <div class="grid2">${f('b-lbal', 'Loan balance ($)', moneyInp('b-lbal', 'loan_balance', b.loan_balance))}${f('b-rate', 'Interest rate (%)', inp('b-rate', 'loan_rate', b.loan_rate, 'inputmode="decimal" placeholder="e.g. 6.25"'))}</div>
+        ${f('b-hval', 'Estimated home value ($)', moneyInp('b-hval', 'home_value', b.home_value))}
+        <p class="small muted">The latest “Balance after” you enter replaces the loan balance. Home value is your own estimate, for equity.</p>
+      </section>`;
     const month = isNew ? '' : `<section class="card">
         <h2>${monthLabel(S.month)}</h2>
         <div class="grid2">${f('p-amt', 'Amount ($)', moneyInp('p-amt', 'p_amount', amt))}${f('p-date', 'Paid on', inp('p-date', 'p_paid', paidDate, 'type="date"'))}</div>
         <div class="grid2">${f('p-method', 'Paid with', `<select class="input" id="p-method" name="p_method">${methodOpts(pay.method)}</select>`)}${f('p-conf', 'Confirmation #', inp('p-conf', 'p_confirmation', pay.confirmation))}</div>
-        ${f('p-note', 'Note', inp('p-note', 'p_note', pay.note))}
+        ${f('p-note', 'Note', inp('p-note', 'p_note', pay.note))}${mortMonth}
         <div class="field"><span class="lab">Bill photo or receipt</span>
           ${pay.receipt_path ? `<div class="btns"><button type="button" class="btn" data-act="receipt-view">View</button><button type="button" class="btn danger" data-act="receipt-remove">Remove</button></div><div id="receipt-slot"></div>` :
             `<label class="btn" style="width:100%"><input type="file" accept="image/*,application/pdf" class="sr" data-change="receipt"> Add photo or PDF</label>`}
@@ -1175,7 +1305,7 @@ function setup() {
         ${f('b-url', 'Payment website', inp('b-url', 'pay_url', b.pay_url, 'type="url" inputmode="url" placeholder="https://"'))}
         ${f('b-notes', 'Notes', `<textarea class="input" id="b-notes" name="notes">${esc(b.notes)}</textarea>`)}
       </section>`;
-    return sheetShell(isNew ? 'Add bill' : billTitle(b), 'bill', month + details, isNew ? null : 'Delete bill and its history');
+    return sheetShell(isNew ? 'Add bill' : billTitle(b), 'bill', month + loan + details, isNew ? null : 'Delete bill and its history');
   }
 
   function rentalSheet(sh) {
@@ -1357,6 +1487,9 @@ function setup() {
       case 'push-test': await testPush(); break;
       case 'install': if (S.installEvt) { S.installEvt.prompt(); S.installEvt = null; render(); } break;
       case 'ics': downloadICS(); break;
+      case 'tax-year': S.taxYear = (S.taxYear || Number(S.month.slice(0, 4))) + Number(el.dataset.delta); render(); break;
+      case 'tax-pdf': taxPDF(); break;
+      case 'tax-csv': taxCSV(); break;
       case 'copy-script':
         if (!S.household.import_token) { toast('Refresh first, then try again.'); break; }
         try { await navigator.clipboard.writeText(importScript()); toast('Setup script copied'); }
@@ -1467,6 +1600,7 @@ function setup() {
         name, label: val('label') || null, account_number: val('account_number') || null, category: val('category') || 'Other',
         unit_id: val('unit_id') || null, due_day: intv('due_day', 1, 31), default_amount: num(val('default_amount')),
         amount_type: fixed ? 'fixed' : 'variable', autopay: !!fd.get('autopay'), pay_url: val('pay_url') || null, notes: val('notes') || null,
+        loan_balance: fd.has('loan_balance') ? num(val('loan_balance')) : (b.loan_balance ?? null), loan_rate: fd.has('loan_rate') ? (parseFloat(val('loan_rate')) || null) : (b.loan_rate ?? null), home_value: fd.has('home_value') ? num(val('home_value')) : (b.home_value ?? null),
         escrow: !!fd.get('escrow'), due_months: (() => { const ms = fd.getAll('due_m').map(Number).filter((n) => n >= 1 && n <= 12); return ms.length ? ms : null; })()
       });
       saveBill(nb);
@@ -1474,7 +1608,9 @@ function setup() {
         const paidOn = val('p_paid'); const pay = getPay(nb, S.month);
         let paidAt = null;
         if (paidOn) paidAt = pay && pay.paid_at && isoDate(new Date(pay.paid_at)) === paidOn ? pay.paid_at : new Date(paidOn + 'T12:00:00').toISOString();
-        savePayment(nb, S.month, { amount: num(val('p_amount')), paid_at: paidAt, method: val('p_method') || null, confirmation: val('p_confirmation') || null, note: val('p_note') || null });
+        const extra = nb.category === 'Mortgage' ? { principal: num(val('p_principal')), interest: num(val('p_interest')), escrow_part: num(val('p_escrow')), balance_after: num(val('p_balance')) } : {};
+        savePayment(nb, S.month, Object.assign({ amount: num(val('p_amount')), paid_at: paidAt, method: val('p_method') || null, confirmation: val('p_confirmation') || null, note: val('p_note') || null }, extra));
+        if (extra.balance_after != null) { nb.loan_balance = extra.balance_after; saveBill(nb); }
       }
       S.sheet = null; if (isNew) { S.tab = 'bills'; } render(); toast(isNew ? 'Bill added' : 'Saved');
     } else if (kind === 'rental') {
@@ -1543,6 +1679,12 @@ function setup() {
         const t = document.getElementById('l-title'); if (t) t.value = q.title; const u = document.getElementById('l-unit'); if (u && q.unit_id) u.value = q.unit_id;
         toast('Request updated. Add the cost to finish.');
       } else { S.sheet = null; render(); toast('Request updated'); }
+    } else if (kind === 'rental-pct') {
+      const v = parseInt(val('pct'), 10);
+      if (!(v >= 0 && v <= 100)) return toast('Enter 0–100.');
+      S.household.rental_pct = v;
+      queue({ kind: 'update', table: 'households', row: { rental_pct: v }, match: { id: S.household.id } });
+      render(); toast('Saved');
     } else if (kind === 'appliance') {
       const isNew = S.sheet.type === 'new-appliance';
       const a = isNew ? { id: uuid(), household_id: S.household.id, created_at: new Date().toISOString() } : S.appliances.find((x) => x.id === S.sheet.id);
@@ -1668,7 +1810,7 @@ function setup() {
 
   // ---------- export ----------
   function download(name, text, type) {
-    const blob = new Blob([text], { type });
+    const blob = text instanceof Blob ? text : new Blob([text], { type });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);

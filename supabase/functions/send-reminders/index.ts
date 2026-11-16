@@ -138,6 +138,55 @@ async function runReminders() {
       lines.push(kind === 'today' ? `Upkeep due today: ${t.title}` : `Upkeep in ${diff} day${diff === 1 ? '' : 's'}: ${t.title}`);
     }
 
+    // Documents expiring (30 days, day of) and appliance warranties ending (30 days)
+    {
+      const dayIso2 = `${now.y}-${String(now.m).padStart(2, '0')}-${String(now.d).padStart(2, '0')}`;
+      const dd = (iso: string) => Math.round((Date.parse(iso + 'T00:00:00Z') - Date.parse(dayIso2 + 'T00:00:00Z')) / 86400000);
+      const [{ data: docs }, { data: apps }] = await Promise.all([
+        db.from('documents').select('id,title,expires_on').eq('household_id', mem.household_id).not('expires_on', 'is', null),
+        db.from('appliances').select('id,name,warranty_until').eq('household_id', mem.household_id).not('warranty_until', 'is', null),
+      ]);
+      for (const d of docs ?? []) {
+        const n = dd(d.expires_on);
+        if (n !== 30 && n !== 0) continue;
+        const { error } = await db.from('reminder_log').insert({ payment_key: `${d.id}:doc:${d.expires_on}:${n}`, user_id: mem.user_id });
+        if (!error) lines.push(n === 0 ? `${d.title} expires today` : `${d.title} expires in 30 days`);
+      }
+      for (const a of apps ?? []) {
+        if (dd(a.warranty_until) !== 30) continue;
+        const { error } = await db.from('reminder_log').insert({ payment_key: `${a.id}:warranty:${a.warranty_until}`, user_id: mem.user_id });
+        if (!error) lines.push(`${a.name} warranty ends in 30 days. Book any covered repairs now.`);
+      }
+    }
+
+    // Monthly summary on the 1st: last month's money in and out
+    if (now.d === 1) {
+      const prev = new Date(Date.UTC(now.y, now.m - 2, 1));
+      const pp = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}-01`;
+      const pe = `${now.y}-${String(now.m).padStart(2, '0')}-01`;
+      const { error: dup } = await db.from('reminder_log').insert({ payment_key: `summary:${mem.household_id}:${pp}`, user_id: mem.user_id });
+      if (!dup) {
+        const [{ data: rps }, { data: pays }, { data: logs }, { data: rents }] = await Promise.all([
+          db.from('rent_payments').select('rental_id,amount_due,amount_received').eq('household_id', mem.household_id).eq('period', pp),
+          db.from('payments').select('amount,paid_at,bills(escrow,active)').eq('household_id', mem.household_id).eq('period', pp),
+          db.from('maintenance_log').select('cost').eq('household_id', mem.household_id).gte('done_on', pp).lt('done_on', pe),
+          db.from('rentals').select('id,rent_amount').eq('household_id', mem.household_id).eq('active', true),
+        ]);
+        const rin = (rps ?? []).reduce((t, r) => t + Number(r.amount_received ?? 0), 0);
+        // deno-lint-ignore no-explicit-any
+        const bout = (pays ?? []).filter((x: any) => x.paid_at && !x.bills?.escrow).reduce((t, x) => t + Number(x.amount ?? 0), 0);
+        const uout = (logs ?? []).reduce((t, l) => t + Number(l.cost ?? 0), 0);
+        const owed = (rents ?? []).reduce((t, r) => { const rp = (rps ?? []).find((x) => x.rental_id === r.id); const due = Number(rp?.amount_due ?? r.rent_amount ?? 0); return t + Math.max(0, due - Number(rp?.amount_received ?? 0)); }, 0);
+        const net = rin - bout - uout;
+        const label = prev.toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+        total += await push(mem.user_id, {
+          title: `${label} summary`,
+          body: `Rent in ${money(rin)} · bills ${money(bout)} · upkeep ${money(uout)} · net ${net < 0 ? '-' : ''}${money(Math.abs(net))}` + (owed > 0 ? `\nRent still owed: ${money(owed)}` : ''),
+          tag: 'summary-' + pp, url: './',
+        });
+      }
+    }
+
     if (!lines.length) continue;
     total += await push(mem.user_id, {
       title: lines.length === 1 ? 'House reminder' : `${lines.length} things need attention`,
