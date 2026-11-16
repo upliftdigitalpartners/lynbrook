@@ -168,20 +168,27 @@ async function runReminders() {
       if (!dup) {
         const [{ data: rps }, { data: pays }, { data: logs }, { data: rents }] = await Promise.all([
           db.from('rent_payments').select('rental_id,amount_due,amount_received').eq('household_id', mem.household_id).eq('period', pp),
-          db.from('payments').select('amount,paid_at,bills(escrow,active)').eq('household_id', mem.household_id).eq('period', pp),
-          db.from('maintenance_log').select('cost').eq('household_id', mem.household_id).gte('done_on', pp).lt('done_on', pe),
+          db.from('payments').select('amount,paid_at,bills(escrow,active,units(exclude_from_tax))').eq('household_id', mem.household_id).eq('period', pp),
+          db.from('maintenance_log').select('cost,units(exclude_from_tax)').eq('household_id', mem.household_id).gte('done_on', pp).lt('done_on', pe),
           db.from('rentals').select('id,rent_amount').eq('household_id', mem.household_id).eq('active', true),
         ]);
         const rin = (rps ?? []).reduce((t, r) => t + Number(r.amount_received ?? 0), 0);
         // deno-lint-ignore no-explicit-any
-        const bout = (pays ?? []).filter((x: any) => x.paid_at && !x.bills?.escrow).reduce((t, x) => t + Number(x.amount ?? 0), 0);
-        const uout = (logs ?? []).reduce((t, l) => t + Number(l.cost ?? 0), 0);
+        const isHome = (x: any) => !!(x?.units?.exclude_from_tax);
+        // deno-lint-ignore no-explicit-any
+        const paid = (pays ?? []).filter((x: any) => x.paid_at && !x.bills?.escrow);
+        // deno-lint-ignore no-explicit-any
+        const bout = paid.filter((x: any) => !isHome(x.bills)).reduce((t, x) => t + Number(x.amount ?? 0), 0);
+        // deno-lint-ignore no-explicit-any
+        const uout = (logs ?? []).filter((l: any) => !isHome(l)).reduce((t, l) => t + Number(l.cost ?? 0), 0);
+        // deno-lint-ignore no-explicit-any
+        const hout = paid.filter((x: any) => isHome(x.bills)).reduce((t, x) => t + Number(x.amount ?? 0), 0) + (logs ?? []).filter((l: any) => isHome(l)).reduce((t, l) => t + Number(l.cost ?? 0), 0);
         const owed = (rents ?? []).reduce((t, r) => { const rp = (rps ?? []).find((x) => x.rental_id === r.id); const due = Number(rp?.amount_due ?? r.rent_amount ?? 0); return t + Math.max(0, due - Number(rp?.amount_received ?? 0)); }, 0);
         const net = rin - bout - uout;
         const label = prev.toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
         total += await push(mem.user_id, {
           title: `${label} summary`,
-          body: `Rent in ${money(rin)} · bills ${money(bout)} · upkeep ${money(uout)} · net ${net < 0 ? '-' : ''}${money(Math.abs(net))}` + (owed > 0 ? `\nRent still owed: ${money(owed)}` : ''),
+          body: `Rental: rent in ${money(rin)} · bills ${money(bout)} · upkeep ${money(uout)} · net ${net < 0 ? '-' : ''}${money(Math.abs(net))}` + (owed > 0 ? `\nRent still owed: ${money(owed)}` : '') + (hout > 0 ? `\nHome bills: ${money(hout)}` : ''),
           tag: 'summary-' + pp, url: './',
         });
       }

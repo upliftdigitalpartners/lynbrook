@@ -718,15 +718,48 @@
   }
 
   // ----- Summary -----
+  // Places marked as home (not part of the rental), e.g. Cedarcroft
+  function isHome(unitId) { const u = S.units.find((x) => x.id === unitId); return !!(u && u.exclude_from_tax); }
+  function homeNames() { return S.units.filter((u) => u.exclude_from_tax).map((u) => u.name); }
+  function billSplit(period) {
+    const rows = billMonth(period, true).rows;
+    const pick = (home) => rows.filter((r) => !r.b.escrow && isHome(r.b.unit_id) === home);
+    const sum = (list, paidOnly) => list.reduce((t, r) => t + ((!paidOnly || (r.pay && r.pay.paid_at)) ? (r.amt || 0) : 0), 0);
+    const rent = pick(false), home = pick(true);
+    return { rentalPaid: sum(rent, true), homePaid: sum(home, true), homeTotal: sum(home, false), homeRows: home };
+  }
+  function upkeepSplit(period, home) { return S.logs.filter((l) => l.done_on && l.done_on.slice(0, 7) === period.slice(0, 7) && isHome(l.unit_id) === home).reduce((t, l) => t + (Number(l.cost) || 0), 0); }
+  function homeCard() {
+    const names = homeNames();
+    if (!names.length) return '';
+    const sp = billSplit(S.month);
+    const hu = upkeepSplit(S.month, true);
+    const unpaid = sp.homeRows.filter((r) => !(r.pay && r.pay.paid_at));
+    const months = []; for (let i = 5; i >= 0; i--) months.push(addMonths(S.month, -i));
+    const hist = months.map((k) => ({ k, t: billSplit(k).homePaid + upkeepSplit(k, true) }));
+    const max = Math.max(1, ...hist.map((h) => h.t));
+    return `<section class="card" aria-label="Home: ${esc(names.join(', '))}">
+      <div class="row between"><h2>Home · ${esc(names.join(', '))}</h2><span class="tag">Not rental</span></div>
+      <div class="grid2">
+        <div class="stat"><span class="small muted">Paid in ${monthLabel(S.month, true)}</span><span class="v display num">${money(sp.homePaid + hu)}</span></div>
+        <div class="stat"><span class="small muted">Still to pay</span><span class="v display num">${money(Math.max(0, sp.homeTotal - sp.homePaid))}</span><span class="small muted">${unpaid.length} ${unpaid.length === 1 ? 'bill' : 'bills'}${unpaid.some((r) => r.st.k === 'setup') ? ' · some need amounts' : ''}</span></div>
+      </div>
+      ${sp.homeRows.map((r) => `<div class="row between small"><span>${esc(billTitle(r.b))}</span><span class="row" style="gap:8px"><strong class="num">${r.amt != null ? money(r.amt) : '—'}</strong><span class="pill ${r.st.k}" style="margin:0">${esc(r.st.label)}</span></span></div>`).join('')}
+      <div class="hist">${hist.map((h) => `<div class="col ${h.k === S.month ? 'cur' : ''}"><span class="num">${h.t ? '$' + Math.round(h.t) : ''}</span><div class="b" style="height:${Math.round((h.t / max) * 100)}%"></div><span>${monthLabel(h.k, true)}</span></div>`).join('')}</div>
+      <p class="small muted">Your home’s bills are kept out of the rental totals above and out of the tax report.</p>
+    </section>`;
+  }
   function summaryTab() {
-    const md = billMonth(S.month, true);
+    const sp = billSplit(S.month);
+    const md = { paid: sp.rentalPaid };
     const rm = rentMonth(S.month);
-    const up = upkeepSpend(S.month);
+    const up = upkeepSplit(S.month, false);
     const net = rm.received - md.paid - up;
+    const homes = homeNames();
     const months = []; for (let i = 5; i >= 0; i--) months.push(addMonths(S.month, -i));
     const rows = months.map((k) => {
       const inc = rentMonth(k).received;
-      const out = billMonth(k, true).paid + upkeepSpend(k);
+      const out = billSplit(k).rentalPaid + upkeepSplit(k, false);
       return { k, inc, out, net: inc - out };
     });
     const max = Math.max(1, ...rows.map((r) => Math.max(r.inc, r.out)));
@@ -742,7 +775,9 @@
     const byFloor = group((b) => { const n = unitName(b.unit_id); return isFloor(n) ? n : 'Shared / house'; });
     const fMax = Math.max(1, ...byFloor.map((g) => g.total));
     const byCat = group((b) => b.category);
+    const propName = (S.household && (S.household.address || '').split(',')[0]) || 'Rental';
     return `${monthNav()}
+      <h2 class="section-h" style="margin:0">${esc(propName)} · rental${homes.length ? ' <span class="small muted" style="font-weight:500">(without ' + esc(homes.join(', ')) + ')</span>' : ''}</h2>
       <div class="grid2">
         <div class="stat"><span class="small muted">Rent collected</span><span class="v display num">${money(rm.received)}</span></div>
         <div class="stat"><span class="small muted">Bills paid</span><span class="v display num">${money(md.paid)}</span></div>
@@ -759,6 +794,7 @@
           ${rows.slice().reverse().map((r) => `<tr><th scope="row">${monthLabel(r.k, true)}</th><td class="num">${money0(r.inc)}</td><td class="num">${money0(r.out)}</td><td class="num" style="color:${r.net < 0 ? 'var(--late-fg)' : 'inherit'}">${r.net < 0 ? '−' : ''}${money0(Math.abs(r.net))}</td></tr>`).join('')}
         </tbody></table>
       </section>
+      ${homeCard()}
       <section class="card" aria-label="Bills by place">
         <h2>Bills by place · ${monthLabel(S.month, true)}</h2>
         ${byFloor.map((g) => `<div class="stack" style="gap:6px"><div class="row between small"><span>${esc(g.name)} <span class="muted">· ${g.n} ${g.n === 1 ? 'bill' : 'bills'}</span></span><strong class="num">${money(g.total)}</strong></div><div class="meter"><div style="width:${Math.max(2, Math.round((g.total / fMax) * 100))}%"></div></div></div>`).join('')}
@@ -929,7 +965,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v1.9</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v1.9.1</p>`;
   }
 
   function importCard() {
