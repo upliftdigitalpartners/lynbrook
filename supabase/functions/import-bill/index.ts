@@ -9,6 +9,7 @@ const PROVIDER_NAMES: Record<string, RegExp> = {
   pseg: /pseg/i,
   nationalgrid: /national\s*grid/i,
   liberty: /liberty/i,
+  rocket: /rocket/i,
 };
 
 type Msg = { id: string; from: string; subject: string; date: string; text: string };

@@ -675,7 +675,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v1.3</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v1.3.1</p>`;
   }
 
   function importCard() {
@@ -685,13 +685,13 @@
     const rows = S.imports.filter((x) => x.status !== 'ignored').slice(0, 8);
     return `<section class="card" aria-label="Email bill import">
       <h2>Import bills from Gmail</h2>
-      ${last ? `<p class="ok">Working · last email ${fmtDay(new Date(last.created_at))}</p>` : '<p class="small muted">Not set up yet. Takes about 2 minutes, in the Gmail account that gets your PSEG, National Grid and Liberty emails.</p>'}
+      ${last ? `<p class="ok">Working · last email ${fmtDay(new Date(last.created_at))}</p>` : '<p class="small muted">Not set up yet. Takes about 2 minutes, in the Gmail account that gets your PSEG, National Grid, Liberty and Rocket Mortgage emails.</p>'}
       <ol class="steps small">
         <li>On a computer, signed in to <strong>that</strong> Gmail, open <a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener">script.google.com → New project</a>.</li>
         <li>Delete what’s there, then paste the setup script: <button class="btn" data-act="copy-script" style="height:36px;margin-top:6px">Copy setup script</button></li>
         <li>Click <strong>Save</strong> (the disk icon), choose <strong>setup</strong> in the function menu, click <strong>Run</strong>, and allow access.</li>
       </ol>
-      <p class="small muted">It checks for new utility emails every 4 hours. It never changes amounts you typed or bills already marked paid. Only you can see the script; it only reads emails from those three companies.</p>
+      <p class="small muted">It checks for new utility emails every 4 hours. It never changes amounts you typed or bills already marked paid. Only you can see the script; it only reads emails from those four companies.</p>
       ${rows.length ? `<div class="stack" style="gap:8px">${rows.map((x) => { const b = S.bills.find((y) => y.id === x.bill_id); return `<div class="row between small" style="align-items:flex-start;gap:8px"><div class="stack" style="gap:0;min-width:0"><span>${esc(b ? billTitle(b) : (x.provider || 'Email'))}</span><span class="muted">${esc(x.detail || x.subject || '')}</span></div><span class="pill ${cls[x.status] || 'up'}" style="margin:0;flex:none">${label[x.status] || esc(x.status)}</span></div>`; }).join('')}</div>` : ''}
       <button class="btn" data-act="rotate-import">Make a new key (stops the old script)</button>
     </section>`;
@@ -699,12 +699,12 @@
   function importScript() {
     const url = CFG.SUPABASE_URL + '/functions/v1/import-bill';
     return `// Evergreen House — Gmail bill import
-// Sends new PSEG, National Grid and Liberty emails to your Evergreen House app.
+// Sends new PSEG, National Grid, Liberty and Rocket Mortgage emails to your Evergreen House app.
 // Run "setup" once. After that it runs by itself every 4 hours.
 
 const ENDPOINT = '${url}';
 const KEY = '${S.household.import_token}';
-const QUERY = 'from:(pseg OR psegliny OR nationalgrid OR "national grid" OR libertyutilities OR libertyenergyandwater OR "liberty utilities") newer_than:45d';
+const QUERY = 'from:(pseg OR psegliny OR nationalgrid OR "national grid" OR libertyutilities OR libertyenergyandwater OR "liberty utilities" OR rocketmortgage OR "rocket mortgage") newer_than:45d';
 
 function importBills() {
   const threads = GmailApp.search(QUERY, 0, 40);
