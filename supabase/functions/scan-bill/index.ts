@@ -4,13 +4,25 @@ import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 
 const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 const GROQ_KEY = Deno.env.get('GROQ_API_KEY') ?? '';
-const MODEL = Deno.env.get('GROQ_VISION_MODEL') ?? 'meta-llama/llama-4-scout-17b-16e-instruct';
+const MODEL = Deno.env.get('GROQ_VISION_MODEL') ?? 'qwen/qwen3.8-27b';
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 const json = (b: unknown, status = 200) => Response.json(b, { status, headers: cors });
+
+let cachedModel: string | null = null;
+let lastModels = '';
+async function pickVisionModel(skip: string): Promise<string | null> {
+  const r = await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: `Bearer ${GROQ_KEY}` } });
+  if (!r.ok) { lastModels = 'models list failed: ' + r.status; return null; }
+  const ids: string[] = ((await r.json()).data ?? []).filter((m: { active?: boolean }) => m.active !== false).map((m: { id: string }) => m.id);
+  lastModels = ids.join(', ');
+  const prefs = [/llama-4-scout/i, /llama-4-maverick/i, /llama-4/i, /vision/i, /\bvl\b|-vl-/i, /qwen/i];
+  for (const re of prefs) { const hit = ids.find((id) => re.test(id) && id !== skip); if (hit) return hit; }
+  return null;
+}
 
 const PROMPT = `You read photos of US household bills (utilities, mortgage, insurance, taxes).
 Return ONLY a JSON object with these keys:
@@ -39,11 +51,11 @@ Deno.serve(async (req) => {
   if (!b64 || !/^image\/(jpeg|png|webp)$/.test(type)) return json({ error: 'Send a JPEG, PNG or WebP photo.' }, 400);
   if (b64.length > 5_500_000) return json({ error: 'Photo too large.' }, 400);
 
-  const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  const ask = (model: string) => fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: MODEL,
+      model,
       temperature: 0,
       max_completion_tokens: 400,
       response_format: { type: 'json_object' },
@@ -53,8 +65,19 @@ Deno.serve(async (req) => {
       ] }],
     }),
   });
-  const out = await r.json().catch(() => ({}));
-  if (!r.ok) { console.error('groq', r.status, JSON.stringify(out).slice(0, 500)); return json({ error: 'The bill reader is unavailable (' + r.status + '). Try again later.' }, 502); }
+  let model = cachedModel || MODEL;
+  let r = await ask(model);
+  let out = await r.json().catch(() => ({}));
+  if (r.status === 404 || r.status === 400 && /model/i.test(JSON.stringify(out))) {
+    // The model was renamed or retired: pick a current vision model from Groq's list and retry once
+    const alt = await pickVisionModel(model);
+    if (alt) { model = alt; r = await ask(model); out = await r.json().catch(() => ({})); if (r.ok) cachedModel = model; }
+  }
+  if (!r.ok) {
+    const msg = String(out?.error?.message ?? '').slice(0, 200);
+    console.error('groq', r.status, model, msg);
+    return json({ error: 'The bill reader is unavailable (' + r.status + (msg ? ': ' + msg : '') + ').', model, available: lastModels || undefined }, 502);
+  }
   let fields: Record<string, unknown> = {};
   try { fields = JSON.parse(out.choices?.[0]?.message?.content ?? '{}'); } catch { return json({ error: 'Couldn’t read that photo. Try a clearer, flatter shot.' }, 422); }
   const amount = typeof fields.amount_due === 'number' ? fields.amount_due : parseFloat(String(fields.amount_due ?? '').replace(/[$,]/g, ''));
