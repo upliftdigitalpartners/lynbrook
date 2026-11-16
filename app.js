@@ -1293,8 +1293,14 @@
       ? '<ol class="steps"><li>Open this page in <strong>Safari</strong>.</li><li>Tap the <strong>Share</strong> button.</li><li>Tap <strong>Add to Home Screen</strong>, then <strong>Add</strong>.</li><li>Open Evergreen from your Home Screen.</li></ol>'
       : S.installEvt ? '<button class="btn primary block" data-act="install">Install app</button>'
       : '<p class="small muted">In Chrome, open the ⋮ menu and choose <strong>Install app</strong> or <strong>Add to Home screen</strong>.</p>';
+    const th = getTheme();
     return `
       ${guideCard()}
+      <section class="card" aria-label="Appearance">
+        <h2>Appearance</h2>
+        <div class="seg theme-seg" role="group" aria-label="Light or dark">${[['auto', 'Automatic'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<button data-act="theme" data-v="${v}" aria-pressed="${th === v}">${l}</button>`).join('')}</div>
+        <p class="small muted">Automatic follows your phone’s light or dark setting. This choice is saved on this device only.</p>
+      </section>
       <section class="card" aria-label="Reminders">
         <h2>Reminders</h2>
         ${push}
@@ -1340,7 +1346,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.2</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.3</p>`;
   }
 
   function importCard() {
@@ -1852,6 +1858,7 @@ function setup() {
     const id = el.dataset.id;
     switch (act) {
       case 'tab': S.tab = el.dataset.tab; window.scrollTo(0, 0); render(); break;
+      case 'theme': try { localStorage.setItem('eh-theme', el.dataset.v); } catch (_) {} applyTheme(el.dataset.v); render(); toast(el.dataset.v === 'auto' ? 'Following your phone' : (el.dataset.v === 'dark' ? 'Dark' : 'Light') + ' mode on'); break;
       case 'jump': { const c = document.getElementById('bill-' + id); if (c) { c.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' }); c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 1200); } else { S.filter = 'all'; S.unit = 'all'; render(); const d = document.getElementById('bill-' + id); if (d) d.scrollIntoView({ block: 'center' }); } break; }
       case 'go': {
         S.tab = el.dataset.tab; S.sheet = null; window.scrollTo(0, 0); render();
@@ -2438,6 +2445,17 @@ function setup() {
       ind.classList.remove('spinning', 'ready'); ind.style.transform = 'translate(-50%,-50px)'; ind.style.opacity = 0; pull = 0;
     });
   })();
+
+  // ---------- appearance (per device) ----------
+  function getTheme() { try { return localStorage.getItem('eh-theme') || 'auto'; } catch (_) { return 'auto'; } }
+  function applyTheme(t) {
+    const root = document.documentElement;
+    if (t === 'light' || t === 'dark') root.setAttribute('data-theme', t); else root.removeAttribute('data-theme');
+    const dark = t === 'dark' || (t !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.setAttribute('content', dark ? '#0F1A16' : '#F6F3EC');
+  }
+  applyTheme(getTheme());
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(getTheme()));
 
   // ---------- boot ----------
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e));

@@ -1,41 +1,62 @@
+@font-face { font-family: 'Fraunces'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('fonts/fraunces.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('fonts/inter.woff2') format('woff2'); }
+
+/* Evergreen, refined: light */
 :root {
-  --bg: #F4F5F2;
+  --bg: #F6F3EC;
   --surface: #FFFFFF;
-  --ink: #16201C;
-  --muted: #5B6661;
-  --muted-2: #4D5853;
-  --line: #E2E6E1;
-  --line-2: #EDF0EC;
-  --field: #C9D0CA;
-  --chip: #F0F2EE;
-  --seg: #E9ECE7;
-  --accent: #1F6F5C;
+  --ink: #14211C;
+  --muted: #5C6661;
+  --muted-2: #4C5752;
+  --line: #E6E1D6;
+  --line-2: #EFEBE1;
+  --field: #C8CFC8;
+  --chip: #EFEBE1;
+  --seg: #E9E5DA;
+  --accent: #1E5B47;
   --accent-ink: #FFFFFF;
-  --hero: #16201C;
-  --hero-ink: #F4F5F2;
-  --hero-muted: #C9D1CC;
-  --hero-track: #34403B;
-  --bar: #7FD1B4;
-  --paid-bg: #E4F1EC; --paid-fg: #17594A;
-  --late-bg: #FDEBDF; --late-fg: #A3400B;
+  --hero: #14211C;
+  --hero-ink: #F6F3EC;
+  --hero-muted: #C3CCC6;
+  --hero-track: #2C3A34;
+  --bar: #8FD3B6;
+  --stamp: #A27C33;
+  --paid-bg: #E3EFE8; --paid-fg: #1E5B47;
+  --late-bg: #FBE9DF; --late-fg: #A3400B;
   --soon-bg: #E7ECF9; --soon-fg: #2B4C9B;
-  --setup-bg: #FFF2D6; --setup-fg: #6B4A06;
+  --setup-bg: #FBF0D9; --setup-fg: #6B4A06;
+  --hero-shadow: 0 10px 30px rgba(20,33,28,.16);
+  --serif: 'Fraunces', Georgia, 'Times New Roman', serif;
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-t: env(safe-area-inset-top, 0px);
   color-scheme: light;
 }
+/* Evergreen, refined: dark (follows the phone unless Settings says otherwise) */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0F1513; --surface: #182220; --ink: #EEF2EF; --muted: #A3AFA9; --muted-2: #B5C0BA;
-    --line: #26322E; --line-2: #222D29; --field: #3A4843; --chip: #22302B; --seg: #1E2926;
-    --accent: #4FB89A; --accent-ink: #0B1411;
-    --hero: #1F2D29; --hero-ink: #EEF2EF; --hero-muted: #B5C0BA; --hero-track: #34443F; --bar: #7FD1B4;
+  :root:not([data-theme="light"]) {
+    --bg: #0F1A16; --surface: #172520; --ink: #EEF1EC; --muted: #A4B0AA; --muted-2: #B6C1BB;
+    --line: #24342E; --line-2: #1E2D27; --field: #3B4C45; --chip: #21302A; --seg: #1C2A25;
+    --accent: #6CC4A1; --accent-ink: #0B1411;
+    --hero: #1C2C26; --hero-ink: #EEF1EC; --hero-muted: #B5C0BA; --hero-track: #2C3D36; --bar: #8FD3B6; --stamp: #D9B46A;
     --paid-bg: #173A31; --paid-fg: #9CE0C6;
     --late-bg: #43251A; --late-fg: #FFB98F;
     --soon-bg: #1F2B47; --soon-fg: #A9BEF2;
     --setup-bg: #3B3016; --setup-fg: #F2D48C;
+    --hero-shadow: 0 10px 30px rgba(0,0,0,.4);
     color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #0F1A16; --surface: #172520; --ink: #EEF1EC; --muted: #A4B0AA; --muted-2: #B6C1BB;
+  --line: #24342E; --line-2: #1E2D27; --field: #3B4C45; --chip: #21302A; --seg: #1C2A25;
+  --accent: #6CC4A1; --accent-ink: #0B1411;
+  --hero: #1C2C26; --hero-ink: #EEF1EC; --hero-muted: #B5C0BA; --hero-track: #2C3D36; --bar: #8FD3B6; --stamp: #D9B46A;
+  --paid-bg: #173A31; --paid-fg: #9CE0C6;
+  --late-bg: #43251A; --late-fg: #FFB98F;
+  --soon-bg: #1F2B47; --soon-fg: #A9BEF2;
+  --setup-bg: #3B3016; --setup-fg: #F2D48C;
+  --hero-shadow: 0 10px 30px rgba(0,0,0,.4);
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -380,3 +401,15 @@ textarea.input { padding: 10px 12px; min-height: 80px; resize: vertical; }
   .float, .spark polyline, .sdots i.on, .wheel-svg { animation: none !important; }
   .swipe, .monthnav[data-swipe-month] { transition: none !important; }
 }
+
+/* ===== v2.3 Evergreen, refined ===== */
+.display, .big, .amt, .ring-num, .stat .v, .topbar h1, .sheet-head h2, .empty strong, .card h2, .section-h, .wheel-center strong {
+  font-family: var(--serif); font-optical-sizing: auto; letter-spacing: -0.005em;
+}
+.topbar h1 { font-weight: 600; font-size: 32px; }
+.big { font-weight: 600; }
+.card h2, .section-h { font-weight: 600; }
+.hero { box-shadow: var(--hero-shadow); }
+.paidstamp { border-color: var(--stamp); color: var(--stamp); font-family: var(--serif); font-weight: 700; letter-spacing: .14em; opacity: .85; }
+.tab[aria-current="page"] { background: var(--chip); }
+.theme-seg button { min-height: 44px; }

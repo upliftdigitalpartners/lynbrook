@@ -1,5 +1,5 @@
 // Service worker: offline app shell + push notifications.
-const VERSION = 'v2.2.0';
+const VERSION = 'v2.3.0';
 const CACHE = 'evergreen-' + VERSION;
 const SHELL = [
   './',
@@ -10,6 +10,8 @@ const SHELL = [
   './vendor/supabase.js',
   './vendor/591.supabase.js',
   './vendor/jspdf.umd.min.js',
+  './fonts/inter.woff2',
+  './fonts/fraunces.woff2',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
