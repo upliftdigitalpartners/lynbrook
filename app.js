@@ -975,11 +975,13 @@
         + (!attention.length && !later.length ? emptyState('done', 'All caught up', 'Every ' + monthLabel(S.month).split(' ')[0] + ' bill is paid. Enjoy the quiet.') : '')
         + (paid.length ? `<details class="paidfold" data-fold="b-paid" ${isOpen('b-paid', false) ? 'open' : ''}><summary><span>Paid <span class="count">${paid.length}</span></span><span class="num muted">${money(paidSum)}</span><span class="chev" aria-hidden="true"></span></summary><ul class="prows">${paid.map(paidRow).join('')}</ul></details>` : '');
     if (S.billsView === 'cal') return `${weatherBanner()}${setupBanner()}${storyBar()}${monthNav()}
+      ${utilTotals(md)}
       ${billsHero(md, pct)}
       ${quickCard()}
       ${billsViewSwitch()}
       ${calendarView()}`;
     return `${weatherBanner()}${setupBanner()}${storyBar()}${monthNav()}
+      ${utilTotals(md)}
       ${billsHero(md, pct)}
       ${quickCard()}
       ${billsViewSwitch()}
@@ -1067,6 +1069,20 @@
     <section class="card cal-dayc" aria-live="polite">
       <h2>${esc(dow)}${isCur && sel === td ? ' · today' : ''}</h2>
       ${items.length ? `<ul class="cal-list">${items.map(row).join('')}</ul>` : '<p class="small muted" style="margin:0">Nothing due this day.</p>'}
+    </section>`;
+  }
+  // Utility totals for the month: gas, electricity, and gas + electricity + water. Follows the place chips.
+  function utilTotals(md) {
+    const t = { Gas: 0, Electric: 0, Water: 0 }, missing = { Gas: 0, Electric: 0, Water: 0 }, n = { Gas: 0, Electric: 0, Water: 0 };
+    md.rows.forEach((r) => { const c = r.b.category; if (!(c in t)) return; n[c]++; if (r.amt == null) missing[c]++; else t[c] += r.amt; });
+    if (!n.Gas && !n.Electric && !n.Water) return '';
+    const sub = (c) => !n[c] ? 'No bills' : missing[c] ? missing[c] + ' not in yet' : n[c] + (n[c] === 1 ? ' bill' : ' bills');
+    const miss = missing.Gas + missing.Electric + missing.Water;
+    const tile = (cls, icon, label, v, note) => `<div class="ut ${cls}"><span class="ut-top"><span class="ut-icon" aria-hidden="true">${icon}</span>${label}</span><strong class="display num">${money(v)}</strong><span class="ut-sub">${note}</span></div>`;
+    return `<section class="utils" aria-label="${esc(monthLabel(S.month))} utility totals">
+      ${tile('gas', '🔥', 'Total gas', t.Gas, sub('Gas'))}
+      ${tile('elec', '⚡', 'Total electricity', t.Electric, sub('Electric'))}
+      ${tile('all', '🧾', 'Total bills', t.Gas + t.Electric + t.Water, 'Gas + electric + water' + (t.Water ? ' (' + money0(t.Water) + ')' : '') + (miss ? ' · ' + miss + ' not in yet' : ''))}
     </section>`;
   }
   function billsViewSwitch() {
