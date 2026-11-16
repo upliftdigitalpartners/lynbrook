@@ -7,8 +7,12 @@
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
   });
 
-  const CATEGORIES = ['Mortgage', 'Electric', 'Gas', 'Water', 'Internet & phone', 'Insurance', 'Property tax', 'Trash', 'Other'];
+  const CATEGORIES = ['Mortgage', 'Electric', 'Gas', 'Water', 'Internet & phone', 'Insurance', 'Property tax', 'Trash', 'Contractor', 'Other'];
   const UPKEEP_CATS = ['Heating & cooling', 'Plumbing', 'Electrical', 'Safety', 'Exterior', 'Appliances', 'Yard', 'Cleaning', 'Pest control', 'Other'];
+  const DOC_CATS = ['Lease', 'Insurance', 'Deed & mortgage', 'Tax', 'Warranty & manual', 'Permit', 'Receipt', 'Other'];
+  const TRADES = ['Plumber', 'Electrician', 'Heating & cooling', 'Roofer', 'Handyman', 'Painter', 'Landscaper', 'Snow removal', 'Pest control', 'Appliance repair', 'Locksmith', 'Cleaner', 'Other'];
+  const APPLIANCE_LIFE = { 'Boiler': 20, 'Furnace': 18, 'Water heater': 10, 'Central AC': 15, 'Refrigerator': 13, 'Range / oven': 15, 'Dishwasher': 10, 'Washer': 11, 'Dryer': 13, 'Microwave': 9, 'Sump pump': 10, 'Roof': 25, 'Other': null };
+  const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const METHODS = ['Online', 'Autopay', 'Bank transfer', 'Zelle', 'Check', 'Card', 'Cash', 'Other'];
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
@@ -18,7 +22,7 @@
     view: 'loading', // loading | auth | recovery | join | app
     authErr: '', joinErr: '',
     user: null, household: null, member: null, units: [], bills: [], payments: {},
-    rentals: [], rentPays: {}, tasks: [], logs: [], imports: [],
+    rentals: [], rentPays: {}, tasks: [], logs: [], imports: [], appliances: [], contractors: [], documents: [], docQuery: '',
     tab: 'bills', month: monthKey(new Date()), unit: 'all', filter: 'all', upkeepView: 'upcoming',
     editing: null, sheet: null, sheetErr: '', deleteArm: false,
     online: navigator.onLine, pending: 0, pushState: 'unknown', installEvt: null, busy: false
@@ -95,7 +99,7 @@
   // ---------- local cache + offline outbox ----------
   const cacheKey = () => 'eh-cache-' + (S.user ? S.user.id : 'anon');
   const OUTBOX = 'eh-outbox';
-  const CACHED = ['household', 'member', 'units', 'bills', 'payments', 'rentals', 'rentPays', 'tasks', 'logs', 'imports'];
+  const CACHED = ['household', 'member', 'units', 'bills', 'payments', 'rentals', 'rentPays', 'tasks', 'logs', 'imports', 'appliances', 'contractors', 'documents'];
   function saveCache() {
     try { const o = {}; CACHED.forEach((k) => { o[k] = S[k]; }); localStorage.setItem(cacheKey(), JSON.stringify(o)); } catch (_) {}
   }
@@ -141,7 +145,7 @@
   // ---------- data ----------
   async function loadAll() {
     const cached = readCache();
-    if (cached && cached.household) { Object.assign(S, cached); S.rentals = S.rentals || []; S.rentPays = S.rentPays || {}; S.tasks = S.tasks || []; S.logs = S.logs || []; S.view = 'app'; render(); }
+    if (cached && cached.household) { Object.assign(S, cached); S.rentals = S.rentals || []; S.rentPays = S.rentPays || {}; S.tasks = S.tasks || []; S.logs = S.logs || []; S.appliances = S.appliances || []; S.contractors = S.contractors || []; S.documents = S.documents || []; S.imports = S.imports || []; S.view = 'app'; render(); }
     await flush();
     if (readOutbox().length) return; // still offline; keep local copy
     try {
@@ -159,12 +163,15 @@
         sb.from('rent_payments').select('*').eq('household_id', hid).gte('period', since),
         sb.from('maintenance_tasks').select('*').eq('household_id', hid).order('created_at'),
         sb.from('maintenance_log').select('*').eq('household_id', hid).order('done_on', { ascending: false }).limit(500),
-        sb.from('email_imports').select('*').eq('household_id', hid).order('created_at', { ascending: false }).limit(40)
+        sb.from('email_imports').select('*').eq('household_id', hid).order('created_at', { ascending: false }).limit(40),
+        sb.from('appliances').select('*').eq('household_id', hid).order('created_at'),
+        sb.from('contractors').select('*').eq('household_id', hid).order('name'),
+        sb.from('documents').select('*').eq('household_id', hid).order('created_at', { ascending: false })
       ]);
       res.forEach((r) => { if (r.error) throw r.error; });
-      const [u, b, p, r, rp, t, l, im] = res.map((x) => x.data);
+      const [u, b, p, r, rp, t, l, im, ap, co, dc] = res.map((x) => x.data);
       S.household = m.households; delete m.households; S.member = m;
-      S.units = u; S.bills = b; S.rentals = r; S.tasks = t; S.logs = l; S.imports = im;
+      S.units = u; S.bills = b; S.rentals = r; S.tasks = t; S.logs = l; S.imports = im; S.appliances = ap; S.contractors = co; S.documents = dc;
       S.payments = {}; p.forEach((x) => { S.payments[payKey(x.bill_id, x.period)] = x; });
       S.rentPays = {}; rp.forEach((x) => { S.rentPays[payKey(x.rental_id, x.period)] = x; });
       saveCache();
@@ -211,15 +218,21 @@
     S.rentPays[payKey(r.id, period)] = row;
     queue({ kind: 'upsert', table: 'rent_payments', row: row, onConflict: 'rental_id,period' });
   }
+  const TABLES = { appliances: 'appliances', contractors: 'contractors', documents: 'documents' };
+  function saveRow(list, row) { upsertLocal(S[list], row); queue({ kind: 'upsert', table: TABLES[list], row }); }
+  function deleteRow(list, id) { S[list] = S[list].filter((x) => x.id !== id); queue({ kind: 'delete', table: TABLES[list], id }); }
   function saveTask(t) { upsertLocal(S.tasks, t); queue({ kind: 'upsert', table: 'maintenance_tasks', row: t }); }
   function deleteTask(id) { S.tasks = S.tasks.filter((x) => x.id !== id); queue({ kind: 'delete', table: 'maintenance_tasks', id: id }); }
   function saveLog(l) { upsertLocal(S.logs, l); S.logs.sort((a, b) => (b.done_on || '').localeCompare(a.done_on || '')); queue({ kind: 'upsert', table: 'maintenance_log', row: l }); }
   function deleteLog(id) { S.logs = S.logs.filter((x) => x.id !== id); queue({ kind: 'delete', table: 'maintenance_log', id: id }); }
 
   // ---------- derived ----------
+  function dueInMonth(b, period) { return !b.due_months || !b.due_months.length || b.due_months.includes(parseMonth(period).m); }
+  function monthsLabel(b) { return b.due_months && b.due_months.length ? b.due_months.slice().sort((x, y) => x - y).map((m) => MONTH_NAMES[m - 1]).join(' & ') : ''; }
   function statusFor(b, pay, period) {
     const amt = amountFor(b, pay);
     const due = dueOn(b.due_day, period);
+    if (b.escrow) return { k: 'auto', label: 'Paid from escrow' + (due ? ' · ' + fmtDay(due) : '') };
     if (pay && pay.paid_at) return { k: 'paid', label: 'Paid ' + fmtDay(new Date(pay.paid_at)) };
     if (!due || amt == null) return { k: 'setup', label: 'Needs details' };
     const diff = dayDiff(due);
@@ -236,14 +249,14 @@
     return unitId === S.unit;
   }
   function billMonth(period, all) {
-    const bills = S.bills.filter((b) => b.active !== false).filter((b) => all || unitMatch(b.unit_id));
+    const bills = S.bills.filter((b) => b.active !== false && dueInMonth(b, period)).filter((b) => all || unitMatch(b.unit_id));
     let total = 0, paid = 0, overdue = 0, overdueAmt = 0, setup = 0;
     const rows = bills.map((b) => {
       const pay = getPay(b, period);
       const st = statusFor(b, pay, period);
       const amt = amountFor(b, pay);
-      total += amt || 0;
-      if (pay && pay.paid_at) paid += amt || 0;
+      if (!b.escrow) total += amt || 0;
+      if (pay && pay.paid_at && !b.escrow) paid += amt || 0;
       if (st.label.startsWith('Overdue')) { overdue++; overdueAmt += amt || 0; }
       if (st.k === 'setup') setup++;
       return { b, pay, st, amt, due: dueOn(b.due_day, period) };
@@ -355,13 +368,14 @@
   }
 
   function appView() {
-    const titles = { bills: 'Bills', rent: 'Rent', upkeep: 'Upkeep', summary: 'Summary', settings: 'Settings' };
-    const adds = { bills: ['new-bill', 'Add bill'], rent: ['new-rental', 'Add tenant'], upkeep: ['new-task', 'Add upkeep task'] };
+    const titles = { bills: 'Bills', rent: 'Rent', upkeep: 'House', summary: 'Summary', settings: 'Settings' };
+    const houseAdd = { upcoming: ['new-task', 'Add upkeep task'], history: ['new-log', 'Log a repair'], appliances: ['new-appliance', 'Add appliance'], pros: ['new-contractor', 'Add contractor'], docs: ['new-doc', 'Add document'] };
+    const adds = { bills: ['new-bill', 'Add bill'], rent: ['new-rental', 'Add tenant'], upkeep: houseAdd[S.upkeepView] };
     const addr = S.household && S.household.address ? S.household.address.split(',')[0] : (S.household ? S.household.name : '');
     const offline = !S.online || S.pending
       ? `<span class="status-dot">${!S.online ? 'Offline' : 'Syncing'}${S.pending ? ' · ' + S.pending + ' unsaved' : ''}</span>` : '';
     const body = { bills: billsTab, rent: rentTab, upkeep: upkeepTab, summary: summaryTab, settings: settingsTab }[S.tab]();
-    const tabs = [['bills', 'Bills'], ['rent', 'Rent'], ['upkeep', 'Upkeep'], ['summary', 'Summary'], ['settings', 'Settings']]
+    const tabs = [['bills', 'Bills'], ['rent', 'Rent'], ['upkeep', 'House'], ['summary', 'Summary'], ['settings', 'Settings']]
       .map(([id, l]) => `<button class="tab" data-act="tab" data-tab="${id}" ${S.tab === id ? 'aria-current="page"' : ''}>${ICON[id]}<span>${l}</span></button>`).join('');
     const add = adds[S.tab];
     return `<div class="shell">
@@ -441,7 +455,7 @@
             <button class="btn" data-act="bill" data-id="${b.id}" style="flex:1">Details</button>
           </div>
         </div>` : `<div class="bill-sum">
-          <div class="stack" style="gap:0"><span class="amt display num">${money(r.amt)}</span><span class="small muted">${r.due ? 'Due ' + fmtDay(r.due) : ''}${b.autopay ? ' · Autopay' : ''}${r.pay && r.pay.source === 'email' ? ' · from email' : ''}</span></div>
+          <div class="stack" style="gap:0"><span class="amt display num">${money(r.amt)}</span><span class="small muted">${r.due ? 'Due ' + fmtDay(r.due) : ''}${monthsLabel(b) ? ' · ' + monthsLabel(b) + ' only' : ''}${b.autopay ? ' · Autopay' : ''}${r.pay && r.pay.source === 'email' ? ' · from email' : ''}</span></div>
           <div class="btns">
             ${b.pay_url && !paid ? `<a class="btn" href="${esc(b.pay_url)}" target="_blank" rel="noopener">Pay ${ICON.ext}</a>` : ''}
             <button class="btn" data-act="edit" data-id="${b.id}" aria-label="Edit ${esc(billTitle(b))}">Edit</button>
@@ -525,8 +539,12 @@
     const unsched = tasks.filter((x) => x.st.k === 'setup').length;
     const yr = String(new Date().getFullYear());
     const spent = S.logs.filter((l) => (l.done_on || '').startsWith(yr)).reduce((t, l) => t + (Number(l.cost) || 0), 0);
-    const seg = [['upcoming', 'To do'], ['history', 'History']]
-      .map(([id, l]) => `<button data-act="upkeep-view" data-v="${id}" aria-pressed="${S.upkeepView === id}">${l}</button>`).join('');
+    const seg = [['upcoming', 'To do'], ['history', 'History'], ['appliances', 'Appliances'], ['pros', 'Pros'], ['docs', 'Docs']]
+      .map(([id, l]) => `<button class="chip" data-act="upkeep-view" data-v="${id}" aria-pressed="${S.upkeepView === id}">${l}</button>`).join('');
+    const nav = `<div class="chips" role="group" aria-label="House section">${seg}</div>`;
+    if (S.upkeepView === 'appliances') return nav + appliancesView();
+    if (S.upkeepView === 'pros') return nav + prosView();
+    if (S.upkeepView === 'docs') return nav + docsView();
     let body;
     if (S.upkeepView === 'history') {
       body = S.logs.length ? `<ul class="bills">${S.logs.map(logCard).join('')}</ul>` : '<p class="muted" style="text-align:center;padding:28px 0">Nothing logged yet. Tap <strong>Done</strong> on a task, or log a repair.</p>';
@@ -537,7 +555,7 @@
         (un.length ? `<h2 class="section-h">Not scheduled yet</h2><p class="small muted" style="margin:-8px 0 0">Tap <strong>Done</strong> and enter when it was last done; the app works out the next date.</p><ul class="bills">${un.map(taskCard).join('')}</ul>` : '') +
         (!tasks.length ? '<p class="muted" style="text-align:center;padding:28px 0">No upkeep tasks. Tap + to add one.</p>' : '');
     }
-    return `<section class="hero" aria-label="Upkeep overview">
+    return `${nav}<section class="hero" aria-label="Upkeep overview">
         <div class="row between" style="align-items:flex-end">
           <div class="stack" style="gap:2px"><span class="label">Needs attention</span><span class="big display">${overdue + soon} ${overdue + soon === 1 ? 'task' : 'tasks'}</span></div>
         </div>
@@ -545,8 +563,97 @@
         <div class="foot"><span>Spent on upkeep in ${yr}</span><span class="num">${money(spent)}</span></div>
       </section>
       <div class="btns"><button class="btn" data-act="new-log" style="flex:1">Log a repair</button><button class="btn" data-act="new-task" style="flex:1">Add a task</button></div>
-      <div class="seg" role="group" aria-label="Upkeep view">${seg}</div>
       ${body}`;
+  }
+
+  // ----- Appliances / Pros / Docs -----
+  function applianceStatus(a) {
+    const out = [];
+    if (a.warranty_until) {
+      const d = dayDiff(fromIso(a.warranty_until));
+      out.push(d < 0 ? { k: 'up', label: 'Warranty ended ' + fmtDate(fromIso(a.warranty_until)) } : { k: d <= 60 ? 'soon' : 'paid', label: 'Warranty until ' + fmtDate(fromIso(a.warranty_until)) });
+    }
+    if (a.installed_on && a.life_years) {
+      const age = (today() - fromIso(a.installed_on)) / (365.25 * 86400000);
+      if (age >= a.life_years) out.push({ k: 'late', label: 'Past typical life (' + a.life_years + ' yrs) · plan to replace' });
+      else if (age >= a.life_years * 0.8) out.push({ k: 'soon', label: 'Near end of life · budget to replace' });
+    }
+    return out;
+  }
+  function ageLabel(a) {
+    if (!a.installed_on) return '';
+    const y = (today() - fromIso(a.installed_on)) / (365.25 * 86400000);
+    return y < 1 ? 'Installed ' + fmtDate(fromIso(a.installed_on)) : Math.floor(y) + (Math.floor(y) === 1 ? ' year' : ' years') + ' old';
+  }
+  function appliancesView() {
+    const list = S.appliances.slice().sort((a, b) => unitName(a.unit_id).localeCompare(unitName(b.unit_id)) || a.name.localeCompare(b.name));
+    if (!list.length) return '<p class="muted" style="text-align:center;padding:28px 0">Add your boiler, water heater, fridges and washers to track age, warranties and model numbers. Tap +.</p>';
+    return `<ul class="bills">${list.map((a) => `<li class="bill">
+      <div class="bill-info">
+        <div class="row wrap" style="gap:6px"><span class="bill-name">${esc(a.name)}</span><span class="tag">${esc(unitName(a.unit_id))}</span></div>
+        <span class="small muted">${esc([a.brand, a.model].filter(Boolean).join(' ') || a.kind)}${ageLabel(a) ? ' · ' + ageLabel(a) : ''}</span>
+        ${a.serial ? `<button class="acct" data-act="copy" data-text="${esc(a.serial)}" aria-label="Copy serial number ${esc(a.serial)}">Serial <span class="num">${esc(a.serial)}</span> ${ICON.copy}</button>` : ''}
+        ${applianceStatus(a).map((x) => `<span class="pill ${x.k}">${esc(x.label)}</span>`).join('')}
+      </div>
+      <div class="btns"><button class="btn" data-act="appliance" data-id="${a.id}" style="flex:1" aria-label="Edit ${esc(a.name)}">Edit</button></div>
+    </li>`).join('')}</ul>`;
+  }
+  function jobsFor(c) {
+    const n = c.name.toLowerCase();
+    return S.logs.filter((l) => l.vendor && (l.vendor.toLowerCase().includes(n) || n.includes(l.vendor.toLowerCase())));
+  }
+  function prosView() {
+    const list = S.contractors.slice().sort((a, b) => (a.trade || '').localeCompare(b.trade || '') || a.name.localeCompare(b.name));
+    if (!list.length) return '<p class="muted" style="text-align:center;padding:28px 0">Keep your plumber, electrician and boiler service here. Tap +.</p>';
+    return `<ul class="bills">${list.map((c) => {
+      const jobs = jobsFor(c); const spent = jobs.reduce((t, l) => t + (Number(l.cost) || 0), 0);
+      const tel = (c.phone || '').replace(/[^\d+]/g, '');
+      return `<li class="bill">
+        <div class="bill-info">
+          <div class="row wrap" style="gap:6px"><span class="bill-name">${esc(c.name)}</span>${c.trade ? `<span class="tag">${esc(c.trade)}</span>` : ''}</div>
+          <span class="small muted">${jobs.length ? jobs.length + (jobs.length === 1 ? ' job' : ' jobs') + ' · ' + money(spent) + ' · last ' + fmtDate(fromIso(jobs[0].done_on)) : 'No jobs logged yet'}</span>
+          ${c.notes ? `<span class="small muted">${esc(c.notes)}</span>` : ''}
+        </div>
+        <div class="btns">
+          ${tel ? `<a class="btn" href="tel:${esc(tel)}">Call</a><a class="btn" href="sms:${esc(tel)}">Text</a>` : ''}
+          ${c.email ? `<a class="btn" href="mailto:${esc(c.email)}">Email</a>` : ''}
+          <button class="btn" data-act="contractor" data-id="${c.id}" style="flex:1" aria-label="Edit ${esc(c.name)}">Edit</button>
+        </div>
+      </li>`; }).join('')}</ul>`;
+  }
+  function docsView() {
+    const q = S.docQuery.trim().toLowerCase();
+    const list = S.documents.filter((d) => !q || [d.title, d.category, d.notes, unitName(d.unit_id)].join(' ').toLowerCase().includes(q));
+    const groups = DOC_CATS.map((c) => [c, list.filter((d) => (DOC_CATS.includes(d.category) ? d.category : 'Other') === c)]).filter((g) => g[1].length);
+    const expiring = S.documents.filter((d) => d.expires_on && dayDiff(fromIso(d.expires_on)) <= 30);
+    return `${expiring.map((d) => { const x = dayDiff(fromIso(d.expires_on)); return `<p class="notice${x < 0 ? '' : ' info'}">${esc(d.title)} ${x < 0 ? 'expired' : 'expires'} ${fmtDate(fromIso(d.expires_on))}.</p>`; }).join('')}
+      <div class="field"><label for="doc-q" class="sr">Search documents</label><input class="input" id="doc-q" type="search" placeholder="Search documents" value="${esc(S.docQuery)}" data-input="docq" autocomplete="off"></div>
+      ${!S.documents.length ? '<p class="muted" style="text-align:center;padding:28px 0">Keep the lease, insurance policy, deed, warranties and permits here. Tap + to add a photo or PDF.</p>' : ''}
+      ${S.documents.length && !list.length ? '<p class="muted" style="text-align:center;padding:16px 0">Nothing matches.</p>' : ''}
+      ${groups.map(([c, docs]) => `<h2 class="section-h">${esc(c)}</h2><ul class="bills">${docs.map((d) => `<li class="bill">
+        <div class="bill-info">
+          <div class="row wrap" style="gap:6px"><span class="bill-name">${esc(d.title)}</span><span class="tag">${esc(unitName(d.unit_id))}</span></div>
+          <span class="small muted">Added ${fmtDate(new Date(d.created_at))}${d.expires_on ? ' · expires ' + fmtDate(fromIso(d.expires_on)) : ''}</span>
+          ${d.notes ? `<span class="small muted">${esc(d.notes)}</span>` : ''}
+        </div>
+        <div class="btns">${d.file_path ? `<button class="btn primary-soft" data-act="doc-open" data-id="${d.id}" style="flex:1">Open</button>` : ''}<button class="btn" data-act="doc" data-id="${d.id}" style="flex:1" aria-label="Edit ${esc(d.title)}">Edit</button></div>
+      </li>`).join('')}</ul>`).join('')}`;
+  }
+  async function openFile(path) {
+    const w = window.open('', '_blank');
+    const r = await sb.storage.from('receipts').createSignedUrl(path, 600);
+    if (r.error) { if (w) w.close(); return toast(r.error.message); }
+    if (w) w.location = r.data.signedUrl; else window.location.href = r.data.signedUrl;
+  }
+  async function uploadTo(folder, file) {
+    if (!navigator.onLine) { toast('Connect to the internet to upload.'); return null; }
+    if (file.size > 20 * 1024 * 1024) { toast('That file is over 20 MB.'); return null; }
+    const ext = (file.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const path = S.household.id + '/' + folder + '/' + Date.now() + '-' + uuid().slice(0, 8) + '.' + ext;
+    toast('Uploading…');
+    const r = await sb.storage.from('receipts').upload(path, file, { contentType: file.type || undefined, upsert: false });
+    if (r.error) { toast('Upload failed: ' + r.error.message); return null; }
+    return path;
   }
   function taskCard(x) {
     const t = x.t;
@@ -590,7 +697,7 @@
       return { k, inc, out, net: inc - out };
     });
     const max = Math.max(1, ...rows.map((r) => Math.max(r.inc, r.out)));
-    const all = S.bills.filter((b) => b.active !== false);
+    const all = S.bills.filter((b) => b.active !== false && !b.escrow && dueInMonth(b, S.month));
     const group = (keyFn) => {
       const m = new Map();
       all.forEach((b) => {
@@ -695,7 +802,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v1.5</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v1.6</p>`;
   }
 
   function importCard() {
@@ -847,7 +954,53 @@ function setup() {
     if (sh.type === 'task' || sh.type === 'new-task') return taskSheet(sh);
     if (sh.type === 'task-done') return doneSheet(sh);
     if (sh.type === 'log' || sh.type === 'new-log') return logSheet(sh);
+    if (sh.type === 'appliance' || sh.type === 'new-appliance') return applianceSheet(sh);
+    if (sh.type === 'contractor' || sh.type === 'new-contractor') return contractorSheet(sh);
+    if (sh.type === 'doc' || sh.type === 'new-doc') return docSheet(sh);
     return '';
+  }
+  function vendorList() { return `<datalist id="pros-list">${S.contractors.map((c) => `<option value="${esc(c.name)}">`).join('')}</datalist>`; }
+  function applianceSheet(sh) {
+    const isNew = sh.type === 'new-appliance';
+    const a = isNew ? { kind: 'Boiler', unit_id: wholeId() } : S.appliances.find((x) => x.id === sh.id);
+    if (!a) return '';
+    return sheetShell(isNew ? 'Add appliance' : a.name, 'appliance', `<section class="card">
+      <div class="grid2">${f('ap-kind', 'Type', `<select class="input" id="ap-kind" name="kind">${opts(Object.keys(APPLIANCE_LIFE), a.kind)}</select>`)}${f('ap-unit', 'Where', `<select class="input" id="ap-unit" name="unit_id">${unitOptions(a.unit_id)}</select>`)}</div>
+      ${f('ap-name', 'Name', inp('ap-name', 'name', a.name, 'placeholder="e.g. Basement boiler"'))}
+      <div class="grid2">${f('ap-brand', 'Brand', inp('ap-brand', 'brand', a.brand))}${f('ap-model', 'Model #', inp('ap-model', 'model', a.model, 'autocapitalize="characters"'))}</div>
+      ${f('ap-serial', 'Serial #', inp('ap-serial', 'serial', a.serial, 'autocapitalize="characters"'))}
+      <div class="grid2">${f('ap-inst', 'Installed', inp('ap-inst', 'installed_on', a.installed_on, 'type="date"'))}${f('ap-war', 'Warranty until', inp('ap-war', 'warranty_until', a.warranty_until, 'type="date"'))}</div>
+      ${f('ap-life', 'Expected life (years)', inp('ap-life', 'life_years', a.life_years, 'type="number" inputmode="numeric" min="1" max="100" placeholder="Filled in from the type"'))}
+      ${f('ap-notes', 'Notes', `<textarea class="input" id="ap-notes" name="notes" placeholder="Filter size, last service, parts…">${esc(a.notes)}</textarea>`)}
+      <p class="small muted">Tip: the model and serial are on a sticker on the side, back or inside the door.</p>
+    </section>`, isNew ? null : 'Delete appliance');
+  }
+  function contractorSheet(sh) {
+    const isNew = sh.type === 'new-contractor';
+    const c = isNew ? { trade: 'Plumber' } : S.contractors.find((x) => x.id === sh.id);
+    if (!c) return '';
+    const jobs = isNew ? [] : jobsFor(c);
+    return sheetShell(isNew ? 'Add contractor' : c.name, 'contractor', `<section class="card">
+      ${f('co-name', 'Name / company', inp('co-name', 'name', c.name, 'required autocomplete="off"'))}
+      ${f('co-trade', 'Trade', `<select class="input" id="co-trade" name="trade">${opts(TRADES, c.trade)}</select>`)}
+      <div class="grid2">${f('co-phone', 'Phone', inp('co-phone', 'phone', c.phone, 'type="tel" inputmode="tel" autocomplete="off"'))}${f('co-email', 'Email', inp('co-email', 'email', c.email, 'type="email" inputmode="email" autocomplete="off"'))}</div>
+      ${f('co-notes', 'Notes', `<textarea class="input" id="co-notes" name="notes" placeholder="License #, rates, who to ask for…">${esc(c.notes)}</textarea>`)}
+    </section>
+    ${jobs.length ? `<section class="card"><h2>Jobs</h2>${jobs.map((l) => `<div class="row between small"><span>${fmtDate(fromIso(l.done_on))} · ${esc(l.title)}</span><strong class="num">${l.cost != null ? money(l.cost) : ''}</strong></div>`).join('')}</section>` : ''}`,
+    isNew ? null : 'Delete contractor');
+  }
+  function docSheet(sh) {
+    const isNew = sh.type === 'new-doc';
+    const d = isNew ? { category: 'Lease', unit_id: wholeId() } : S.documents.find((x) => x.id === sh.id);
+    if (!d) return '';
+    return sheetShell(isNew ? 'Add document' : d.title, 'doc', `<section class="card">
+      ${f('dc-title', 'Title', inp('dc-title', 'title', d.title, 'required placeholder="e.g. 2nd floor lease 2026–27"'))}
+      <div class="grid2">${f('dc-cat', 'Type', `<select class="input" id="dc-cat" name="category">${opts(DOC_CATS, d.category)}</select>`)}${f('dc-unit', 'For', `<select class="input" id="dc-unit" name="unit_id">${unitOptions(d.unit_id)}</select>`)}</div>
+      ${f('dc-exp', 'Expires / renews <span class="muted">(optional)</span>', inp('dc-exp', 'expires_on', d.expires_on, 'type="date"'))}
+      <div class="field"><label for="dc-file">${d.file_path ? 'Replace file' : 'Photo or PDF'}</label><input class="input" id="dc-file" name="file" type="file" accept="image/*,application/pdf" style="padding:10px"></div>
+      ${f('dc-notes', 'Notes', `<textarea class="input" id="dc-notes" name="notes">${esc(d.notes)}</textarea>`)}
+      <p class="small muted">Files are private to your household. You’ll get a heads-up 30 days before an expiry date.</p>
+    </section>`, isNew ? null : 'Delete document');
   }
 
   function billSheet(sh) {
@@ -875,6 +1028,10 @@ function setup() {
         <div class="grid2">${f('b-day', 'Due day', inp('b-day', 'due_day', b.due_day, 'type="number" inputmode="numeric" min="1" max="31"'))}${f('b-def', 'Usual amount ($)', moneyInp('b-def', 'default_amount', b.default_amount))}</div>
         <label class="checkrow"><input type="checkbox" name="fixed" ${b.amount_type === 'fixed' ? 'checked' : ''}> Same amount every month</label>
         <label class="checkrow"><input type="checkbox" name="autopay" ${b.autopay ? 'checked' : ''}> Paid automatically (autopay)</label>
+        <label class="checkrow"><input type="checkbox" name="escrow" ${b.escrow ? 'checked' : ''}> Paid from mortgage escrow (track only, not counted as money out)</label>
+        <fieldset class="field monthpick"><legend class="lab">Due only in these months <span class="muted">(leave empty for every month)</span></legend>
+          <div class="mgrid">${MONTH_NAMES.map((m, i) => `<label class="mchip"><input type="checkbox" name="due_m" value="${i + 1}" ${(b.due_months || []).includes(i + 1) ? 'checked' : ''}><span>${m}</span></label>`).join('')}</div>
+        </fieldset>
         ${f('b-url', 'Payment website', inp('b-url', 'pay_url', b.pay_url, 'type="url" inputmode="url" placeholder="https://"'))}
         ${f('b-notes', 'Notes', `<textarea class="input" id="b-notes" name="notes">${esc(b.notes)}</textarea>`)}
       </section>`;
@@ -932,7 +1089,7 @@ function setup() {
     if (!t) return '';
     return sheetShell('Done: ' + t.title, 'task-done', `<section class="card">
         ${f('dn-date', 'When', inp('dn-date', 'done_on', isoDate(today()), 'type="date" required'))}
-        <div class="grid2">${f('dn-cost', 'Cost ($)', moneyInp('dn-cost', 'cost', null))}${f('dn-vendor', 'Who did it', inp('dn-vendor', 'vendor', t.vendor, 'placeholder="Me / contractor"'))}</div>
+        <div class="grid2">${f('dn-cost', 'Cost ($)', moneyInp('dn-cost', 'cost', null))}${f('dn-vendor', 'Who did it', inp('dn-vendor', 'vendor', t.vendor, 'placeholder="Me / contractor" list="pros-list"'))}</div>${vendorList()}
         ${f('dn-notes', 'Notes', `<textarea class="input" id="dn-notes" name="notes" placeholder="Optional"></textarea>`)}
         <p class="small muted">${t.interval_months ? 'Next one will be scheduled ' + everyLabel(t).toLowerCase().replace('every', 'in') + ' from this date.' : 'This one-time job will be marked complete.'}</p>
       </section>`, null);
@@ -945,7 +1102,7 @@ function setup() {
     return sheetShell(isNew ? 'Log a repair' : l.title, 'log', `<section class="card">
         ${f('l-title', 'What was done', inp('l-title', 'title', l.title, 'required placeholder="e.g. Fixed leaking kitchen faucet"'))}
         <div class="grid2">${f('l-date', 'Date', inp('l-date', 'done_on', l.done_on, 'type="date" required'))}${f('l-unit', 'Where', `<select class="input" id="l-unit" name="unit_id">${unitOptions(l.unit_id)}</select>`)}</div>
-        <div class="grid2">${f('l-cost', 'Cost ($)', moneyInp('l-cost', 'cost', l.cost))}${f('l-vendor', 'Who did it', inp('l-vendor', 'vendor', l.vendor))}</div>
+        <div class="grid2">${f('l-cost', 'Cost ($)', moneyInp('l-cost', 'cost', l.cost))}${f('l-vendor', 'Who did it', inp('l-vendor', 'vendor', l.vendor, 'list="pros-list"'))}</div>${vendorList()}
         ${f('l-notes', 'Notes', `<textarea class="input" id="l-notes" name="notes">${esc(l.notes)}</textarea>`)}
       </section>`, isNew ? null : 'Delete entry');
   }
@@ -993,12 +1150,18 @@ function setup() {
       case 'task': openSheet('task', id); break;
       case 'task-done': openSheet('task-done', id); break;
       case 'log': openSheet('log', id); break;
-      case 'new-bill': case 'new-rental': case 'new-task': case 'new-log': openSheet(act); break;
+      case 'new-bill': case 'new-rental': case 'new-task': case 'new-log': case 'new-appliance': case 'new-contractor': case 'new-doc': openSheet(act); break;
+      case 'appliance': openSheet('appliance', id); break;
+      case 'contractor': openSheet('contractor', id); break;
+      case 'doc': openSheet('doc', id); break;
+      case 'doc-open': { const d = S.documents.find((x) => x.id === id); if (d && d.file_path) openFile(d.file_path); break; }
       case 'sheet-close': case 'sheet-close-bg': S.sheet = null; render(); break;
       case 'sheet-delete': {
         if (!S.deleteArm) { S.deleteArm = true; render(); break; }
         const t = S.sheet.type, sid = S.sheet.id;
         if (t === 'bill') deleteBill(sid); else if (t === 'rental') deleteRental(sid); else if (t === 'task') deleteTask(sid); else if (t === 'log') deleteLog(sid);
+        else if (t === 'appliance') deleteRow('appliances', sid); else if (t === 'contractor') deleteRow('contractors', sid);
+        else if (t === 'doc') { const d = S.documents.find((x) => x.id === sid); if (d && d.file_path) sb.storage.from('receipts').remove([d.file_path]); deleteRow('documents', sid); }
         S.sheet = null; S.deleteArm = false; render(); toast('Deleted'); break;
       }
       case 'receipt-view': await viewReceipt(); break;
@@ -1118,7 +1281,8 @@ function setup() {
       const nb = Object.assign({}, b, {
         name, label: val('label') || null, account_number: val('account_number') || null, category: val('category') || 'Other',
         unit_id: val('unit_id') || null, due_day: intv('due_day', 1, 31), default_amount: num(val('default_amount')),
-        amount_type: fixed ? 'fixed' : 'variable', autopay: !!fd.get('autopay'), pay_url: val('pay_url') || null, notes: val('notes') || null
+        amount_type: fixed ? 'fixed' : 'variable', autopay: !!fd.get('autopay'), pay_url: val('pay_url') || null, notes: val('notes') || null,
+        escrow: !!fd.get('escrow'), due_months: (() => { const ms = fd.getAll('due_m').map(Number).filter((n) => n >= 1 && n <= 12); return ms.length ? ms : null; })()
       });
       saveBill(nb);
       if (!isNew) {
@@ -1170,6 +1334,38 @@ function setup() {
       if (!val('done_on')) return fail('Pick a date.');
       saveLog(Object.assign({}, l, { title, done_on: val('done_on'), unit_id: val('unit_id') || null, cost: num(val('cost')), vendor: val('vendor') || null, notes: val('notes') || null }));
       S.sheet = null; if (isNew) S.upkeepView = 'history'; render(); toast('Saved');
+    } else if (kind === 'appliance') {
+      const isNew = S.sheet.type === 'new-appliance';
+      const a = isNew ? { id: uuid(), household_id: S.household.id, created_at: new Date().toISOString() } : S.appliances.find((x) => x.id === S.sheet.id);
+      const kindv = val('kind') || 'Other';
+      const name = val('name') || kindv;
+      saveRow('appliances', Object.assign({}, a, { kind: kindv, name, unit_id: val('unit_id') || null, brand: val('brand') || null, model: val('model') || null, serial: val('serial') || null,
+        installed_on: val('installed_on') || null, warranty_until: val('warranty_until') || null, life_years: intv('life_years', 1, 100) || APPLIANCE_LIFE[kindv] || null, notes: val('notes') || null }));
+      S.sheet = null; render(); toast(isNew ? 'Appliance added' : 'Saved');
+    } else if (kind === 'contractor') {
+      const isNew = S.sheet.type === 'new-contractor';
+      const c = isNew ? { id: uuid(), household_id: S.household.id, created_at: new Date().toISOString() } : S.contractors.find((x) => x.id === S.sheet.id);
+      const name = val('name');
+      if (!name) return fail('Add a name.');
+      saveRow('contractors', Object.assign({}, c, { name, trade: val('trade') || null, phone: val('phone') || null, email: val('email') || null, notes: val('notes') || null }));
+      S.contractors.sort((a, b) => a.name.localeCompare(b.name));
+      S.sheet = null; render(); toast(isNew ? 'Contractor added' : 'Saved');
+    } else if (kind === 'doc') {
+      const isNew = S.sheet.type === 'new-doc';
+      const d = isNew ? { id: uuid(), household_id: S.household.id, created_at: new Date().toISOString() } : S.documents.find((x) => x.id === S.sheet.id);
+      const title = val('title');
+      if (!title) return fail('Give it a title.');
+      const file = fd.get('file');
+      let path = d.file_path || null, type = d.file_type || null;
+      if (file && file.size) {
+        const np = await uploadTo('docs', file);
+        if (!np) return;
+        if (path) sb.storage.from('receipts').remove([path]);
+        path = np; type = file.type || null;
+      } else if (isNew) return fail('Choose a photo or PDF.');
+      saveRow('documents', Object.assign({}, d, { title, category: val('category') || 'Other', unit_id: val('unit_id') || null, expires_on: val('expires_on') || null, notes: val('notes') || null, file_path: path, file_type: type }));
+      S.documents.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+      S.sheet = null; render(); toast(isNew ? 'Document saved' : 'Saved');
     } else if (kind === 'password') {
       const p1 = String(fd.get('p1') || ''), p2 = String(fd.get('p2') || '');
       if (p1.length < 8) return toast('Use at least 8 characters.');
@@ -1287,10 +1483,16 @@ function setup() {
     };
     const monthly = (day) => 'RRULE:FREQ=MONTHLY;BYMONTHDAY=' + (day === 31 ? '-1' : day);
     let n = 0;
-    S.bills.filter((b) => b.active !== false && b.due_day).forEach((b) => {
+    S.bills.filter((b) => b.active !== false && b.due_day && !b.escrow).forEach((b) => {
       const amt = b.amount_type === 'fixed' && b.default_amount != null ? ' (' + money(b.default_amount) + ')' : '';
-      ev(b.id, nextOn(b.due_day), 'Pay ' + billTitle(b) + amt, unitName(b.unit_id) + (b.account_number ? ' · Account ' + b.account_number : '') + (b.pay_url ? ' · ' + b.pay_url : ''), monthly(b.due_day)); n++;
+      const desc = unitName(b.unit_id) + (b.account_number ? ' · Account ' + b.account_number : '') + (b.pay_url ? ' · ' + b.pay_url : '');
+      if (b.due_months && b.due_months.length) {
+        let d = null;
+        for (let i = 0; i < 24 && !d; i++) { const k = addMonths(monthKey(t), i); if (dueInMonth(b, k)) { const c = dueOn(b.due_day, k); if (c >= t) d = c; } }
+        if (d) { ev(b.id, d, 'Pay ' + billTitle(b) + amt, desc, 'RRULE:FREQ=MONTHLY;BYMONTH=' + b.due_months.join(',') + ';BYMONTHDAY=' + Math.min(b.due_day, 28)); n++; }
+      } else { ev(b.id, nextOn(b.due_day), 'Pay ' + billTitle(b) + amt, desc, monthly(b.due_day)); n++; }
     });
+    S.documents.filter((x) => x.expires_on).forEach((x) => { ev('doc-' + x.id, fromIso(x.expires_on), 'Expires: ' + x.title, x.category, null); n++; });
     S.rentals.filter((r) => r.active !== false && r.rent_amount).forEach((r) => {
       ev(r.id, nextOn(r.due_day), 'Rent due: ' + rentalTitle(r) + ' (' + money(r.rent_amount) + ')', unitName(r.unit_id), monthly(r.due_day)); n++;
     });
@@ -1324,6 +1526,7 @@ function setup() {
     e.preventDefault(); onAct(el);
   });
   document.addEventListener('change', (e) => { if (e.target.dataset && e.target.dataset.change) onChange(e.target); });
+  document.addEventListener('input', (e) => { if (e.target.dataset && e.target.dataset.input === 'docq') { S.docQuery = e.target.value; render(); } });
   document.addEventListener('submit', (e) => { e.preventDefault(); onSubmit(e.target); });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && S.sheet) { S.sheet = null; render(); }

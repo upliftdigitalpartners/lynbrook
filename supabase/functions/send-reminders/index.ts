@@ -53,12 +53,13 @@ async function runReminders() {
     if (now.h !== mem.remind_hour) continue;
     const period = `${now.y}-${String(now.m).padStart(2, '0')}-01`;
     const daysInMonth = new Date(Date.UTC(now.y, now.m, 0)).getUTCDate();
-    const { data: bills } = await db.from('bills').select('id,name,label,due_day,default_amount,amount_type,autopay').eq('household_id', mem.household_id).eq('active', true);
+    const { data: bills } = await db.from('bills').select('id,name,label,due_day,default_amount,amount_type,autopay,escrow,due_months').eq('household_id', mem.household_id).eq('active', true);
     const { data: pays } = await db.from('payments').select('bill_id,amount,paid_at').eq('household_id', mem.household_id).eq('period', period);
     const payBy = new Map((pays ?? []).map((p) => [p.bill_id, p]));
     const lines: string[] = [];
     for (const b of bills ?? []) {
-      if (!b.due_day || b.autopay) continue;
+      if (!b.due_day || b.autopay || b.escrow) continue;
+      if (b.due_months && b.due_months.length && !b.due_months.includes(now.m)) continue;
       const pay = payBy.get(b.id);
       if (pay?.paid_at) continue;
       const due = Math.min(b.due_day, daysInMonth);

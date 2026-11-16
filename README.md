@@ -11,6 +11,7 @@ A rent, bill and home-upkeep tracker for a two-family house, built as an install
 - Floors (whole house / 1st / 2nd) and categories, with filters and totals
 - Bill details: account #, autopay, payment website, notes, payment method, confirmation #, bill photo or receipt
 - Rent: tenants per floor, rent received (full or partial), grace period and late status, lease end alerts, text/call the tenant
+- House: appliances (age, warranty, model/serial, replace-soon alerts), contractors (call/text, job history), private documents with expiry alerts
 - Upkeep: recurring maintenance tasks that reschedule themselves when marked done, one-off repair log with costs and contractors
 - Summary: rent in vs. bills + upkeep out, net per month, bills by floor and category
 - Push reminders for bills, late rent and upcoming upkeep
@@ -32,7 +33,7 @@ behind row-level security: only signed-in members of a household can read or cha
 | `sw.js` | Service worker: offline cache and push notifications |
 | `manifest.webmanifest`, `icons/` | Install metadata and icons |
 | `vendor/` | Supabase JS client (v2.45.4), bundled so the app works offline |
-| `supabase/migrations/` | Database schema and security rules (`001` bills, `002` rent & upkeep) |
+| `supabase/migrations/` | Database schema and security rules (`001` bills, `002` rent & upkeep, `003`–`004` email import, `005` house records) |
 | `supabase/functions/send-reminders/` | Edge function that sends reminders; run hourly by `pg_cron` |
 | `supabase/functions/import-bill/` | Edge function that reads utility emails (`parse.ts`) and updates bills |
 
