@@ -417,18 +417,58 @@
   // ---------- render ----------
   let raf;
   function renderSoon() { cancelAnimationFrame(raf); raf = requestAnimationFrame(render); }
+  const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // One-shot effects that must not replay on every re-render
+  const FX = { stamp: null, stampUntil: 0, sheetEnter: false, ringFrom: {} };
+  function confetti() {
+    if (reduceMotion()) return;
+    const layer = document.getElementById('fx'); if (!layer) return;
+    const colors = ['#1F6F5C', '#7FD1B4', '#F2C46B', '#2B4C9B', '#E46A4B', '#16201C'];
+    for (let i = 0; i < 44; i++) {
+      const c = document.createElement('span'); c.className = 'conf';
+      c.style.left = Math.random() * 100 + '%'; c.style.background = colors[i % colors.length];
+      c.style.animationDelay = (Math.random() * 0.35) + 's';
+      c.style.setProperty('--dx', (Math.random() * 160 - 80) + 'px'); c.style.setProperty('--r', (Math.random() * 900 - 450) + 'deg');
+      layer.appendChild(c); setTimeout(() => c.remove(), 2600);
+    }
+  }
+  function afterRender() {
+    // Count-up + ring fill for the hero ring
+    document.querySelectorAll('[data-ring]').forEach((el) => {
+      const key = el.dataset.ring, to = Number(el.dataset.to), total = Number(el.dataset.total) || 1;
+      const from = FX.ringFrom[key] != null ? FX.ringFrom[key] : to;
+      FX.ringFrom[key] = to;
+      const arc = el.querySelector('.ring-arc'), num = el.querySelector('.ring-num');
+      const C = Number(arc.dataset.c);
+      const off = (v) => (C * (Math.max(0, Math.min(total, v)) / total)).toFixed(1); // v = amount still to pay; empty ring at 0% paid
+      if (from === to || reduceMotion()) { arc.style.strokeDashoffset = off(to); return; }
+      arc.style.transition = 'none'; arc.style.strokeDashoffset = off(from);
+      requestAnimationFrame(() => { arc.style.transition = ''; arc.style.strokeDashoffset = off(to); });
+      const t0 = performance.now(), dur = 900;
+      const tick = (t) => { const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3); num.textContent = money(from + (to - from) * e); if (k < 1) requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+    });
+    // Sheet: spring in once when opened
+    const sh = document.querySelector('.sheet');
+    if (sh && FX.sheetEnter && !reduceMotion()) {
+      sh.classList.add('enter'); document.querySelector('.sheet-bg').classList.add('enter');
+      // drop the class once it has played, so dragging can move the sheet
+      sh.addEventListener('animationend', () => sh.classList.remove('enter'), { once: true });
+    }
+    FX.sheetEnter = false;
+  }
   function render() {
     const app = document.getElementById('app');
     const y = window.scrollY;
     const ae = document.activeElement;
     const keep = ae && ae.id && app.contains(ae) ? { id: ae.id, v: ae.value, a: ae.selectionStart, b: ae.selectionEnd } : null;
     const sheetEl = app.querySelector('.sheet'); const sheetScroll = sheetEl ? sheetEl.scrollTop : null;
-    if (S.view === 'loading') app.innerHTML = '<div class="splash"><img src="icons/icon-192.png" alt="" width="72" height="72"><p>Loading…</p></div>';
+    if (S.view === 'loading') app.innerHTML = skeletonView();
     else if (S.view === 'auth') app.innerHTML = authView();
     else if (S.view === 'recovery') app.innerHTML = recoveryView();
     else if (S.view === 'join') app.innerHTML = joinView();
     else app.innerHTML = appView();
-    if (S.view === 'app') { window.scrollTo(0, y); updateBadge(); }
+    if (S.view === 'app') { window.scrollTo(0, y); updateBadge(); afterRender(); }
     const ns = app.querySelector('.sheet'); if (ns && sheetScroll != null) ns.scrollTop = sheetScroll;
     if (keep) {
       const n = document.getElementById(keep.id);
@@ -440,6 +480,11 @@
     }
   }
 
+  function skeletonView() {
+    const card = '<div class="bill" aria-hidden="true"><div class="bill-top"><div class="sk" style="width:48px;height:48px;border-radius:14px"></div><div class="stack" style="flex:1;gap:8px"><div class="sk" style="height:14px;width:65%"></div><div class="sk" style="height:12px;width:40%"></div></div></div></div>';
+    return `<div class="shell" aria-busy="true" aria-label="Loading"><header class="topbar"><div class="sk" style="height:12px;width:40%"></div><div class="sk" style="height:28px;width:55%;margin-top:6px"></div></header>
+      <main class="main"><div class="sk" style="height:150px;border-radius:20px"></div>${card}${card}${card}</main></div>`;
+  }
   function authView() {
     return `<div class="auth"><form class="card" data-form="auth" novalidate>
       <img class="logo" src="icons/icon-192.png" alt="">
@@ -505,6 +550,39 @@
       ${isCur ? '' : '<button class="btn" data-act="month-today">This month</button>'}
     </div>`;
   }
+  function ringHero(key, label, left, total, pct, footL, footR, late) {
+    const R = 78, C = 2 * Math.PI * R;
+    const off = (C * (total > 0 ? Math.max(0, left) / total : 0)).toFixed(1);
+    return `<section class="hero ringhero" aria-label="${esc(label)}">
+      <div class="ringwrap" data-ring="${esc(key)}" data-to="${left}" data-total="${total || 1}">
+        <svg width="190" height="190" viewBox="0 0 190 190" role="img" aria-label="${pct}% paid">
+          <circle cx="95" cy="95" r="${R}" class="ring-track"></circle>
+          <circle cx="95" cy="95" r="${R}" class="ring-arc" data-c="${C.toFixed(1)}" transform="rotate(-90 95 95)" style="stroke-dasharray:${C.toFixed(1)};stroke-dashoffset:${off}"></circle>
+        </svg>
+        <div class="ring-center"><span class="label">${esc(label)}</span><span class="big display num ring-num">${money(left)}</span><span class="ring-pct">${pct}% paid</span></div>
+      </div>
+      <div class="foot"><span>${footL}</span><span class="${late ? 'late' : ''}">${footR}</span></div>
+    </section>`;
+  }
+  // ----- #22 month timeline -----
+  function timeline(md) {
+    const { y, m } = parseMonth(S.month); const days = daysIn(y, m);
+    const isCur = S.month === monthKey(new Date());
+    const td = today().getDate();
+    const pos = (d) => ((d - 1) / Math.max(1, days - 1) * 100).toFixed(2);
+    const col = { paid: 'var(--accent)', late: '#E46A4B', soon: '#2B4C9B', up: '#8FA3C9', auto: '#8FA3C9', setup: '#B9C1BB' };
+    const ev = md.rows.filter((r) => r.due).map((r) => ({ d: r.due.getDate(), c: col[r.st.k] || '#B9C1BB', label: billTitle(r.b) + ' · ' + r.st.label, act: `data-act="jump" data-id="${r.b.id}"` }));
+    S.rentals.filter((r) => r.active !== false && r.rent_amount != null && !isHome(r.unit_id)).forEach((r) => {
+      const st = rentStatus(r, getRentPay(r, S.month), S.month);
+      ev.push({ d: Math.min(r.due_day, days), c: st.k === 'paid' ? '#F2C46B' : st.k === 'late' ? '#E46A4B' : '#F2C46B', rent: true, label: 'Rent · ' + rentalTitle(r) + ' · ' + st.label, act: 'data-act="go" data-tab="rent"' });
+    });
+    const byDay = {}; ev.forEach((e) => { (byDay[e.d] = byDay[e.d] || []).push(e); });
+    const dots = Object.keys(byDay).map((d) => byDay[d].map((e, i) => `<button type="button" class="tdot${e.rent ? ' rent' : ''}" ${e.act} aria-label="${esc(e.label)}, ${monthLabel(S.month, true)} ${d}" title="${esc(e.label)}" style="left:${pos(+d)}%;top:${22 - i * 14}px;background:${e.c}"></button>`).join('')).join('');
+    return `<section class="tline" aria-label="Due dates this month">
+      <div class="tl-track"><div class="tl-done" style="width:${isCur ? pos(td) : (S.month < monthKey(new Date()) ? 100 : 0)}%"></div>${isCur ? `<span class="tl-today" style="left:${pos(td)}%" aria-hidden="true"></span>` : ''}${dots}</div>
+      <div class="tl-axis"><span>${monthLabel(S.month, true)} 1</span>${isCur ? `<span>Today · ${td}</span>` : ''}<span>${monthLabel(S.month, true)} ${days}</span></div>
+    </section>`;
+  }
   function hero(label, big, pct, left, right, rightLate) {
     return `<section class="hero" aria-label="${esc(label)}">
       <div class="row between" style="align-items:flex-end">
@@ -528,7 +606,8 @@
     const filt = [['all', 'All ' + md.rows.length], ['unpaid', 'Unpaid ' + unpaid], ['paid', 'Paid ' + (md.rows.length - unpaid)]]
       .map(([id, l]) => `<button data-act="filter" data-filter="${id}" aria-pressed="${S.filter === id}">${l}</button>`).join('');
     return `${weatherBanner()}${setupBanner()}${monthNav()}
-      ${hero('Bills still to pay', money(md.total - md.paid), pct, money(md.paid) + ' of ' + money(md.total) + ' paid', md.overdue ? md.overdue + ' overdue · ' + money(md.overdueAmt) : 'None overdue', md.overdue)}
+      ${ringHero('bills-' + S.month + '-' + S.unit, 'Still to pay', md.total - md.paid, md.total, pct, money(md.paid) + ' of ' + money(md.total) + ' paid', md.overdue ? md.overdue + ' overdue · ' + money(md.overdueAmt) : 'None overdue', md.overdue)}
+      ${timeline(md)}
       ${md.setup ? `<p class="notice">${md.setup} ${md.setup === 1 ? 'bill needs' : 'bills need'} an amount or due day for ${monthLabel(S.month, true)}. Fill them in on the card.</p>` : ''}
       <label class="btn block scanbtn"><input type="file" accept="image/*" capture="environment" class="sr" data-change="scan-bill"> ${ICON.camera} Scan a paper bill</label>
       <div class="chips" role="group" aria-label="Show floor">${unitChips}</div>
@@ -542,7 +621,8 @@
     const complete = r.amt != null && r.due;
     const editing = S.editing === b.id || !complete;
     const unit = unitName(b.unit_id);
-    return `<li class="bill ${paid ? 'paid' : ''}">
+    const justPaid = paid && FX.stamp === b.id && Date.now() < FX.stampUntil;
+    return `<li class="bill ${paid ? 'paid' : ''}" id="bill-${b.id}">${paid ? `<span class="paidstamp${justPaid ? ' slam' : ''}" aria-hidden="true">PAID</span>` : ''}
       <div class="bill-top">
         <button class="check" data-act="toggle" data-id="${b.id}" aria-pressed="${paid}" aria-label="${paid ? 'Mark unpaid' : 'Mark paid'}: ${esc(billTitle(b))}, ${esc(unit)}">${ICON.check}</button>
         <div class="bill-info">
@@ -581,7 +661,7 @@
     const depDue = S.rentals.filter((r) => r.move_out_on && !r.deposit_returned_on);
     const needs = md.rows.filter((x) => x.st.k === 'setup').length;
     return `${monthNav()}
-      ${hero('Rent collected', money(md.received), pct, 'of ' + money(md.expected) + ' expected', md.late ? md.late + ' late' : 'None late', md.late)}
+      ${houseHero(md, pct)}
       ${needs ? `<p class="notice">Add each tenant’s rent amount so the app can track it. Tap <strong>Details</strong> on the card.</p>` : ''}
       ${soon.map((r) => { const d = dayDiff(fromIso(r.lease_end)); return `<p class="notice info">${esc(rentalTitle(r))}’s lease ${d < 0 ? 'ended' : 'ends'} ${fmtDate(fromIso(r.lease_end))}${d >= 0 ? ' (' + d + ' days)' : ''}. <button class="linkbtn" data-act="renew" data-id="${r.id}" style="min-height:0;padding:0">Renew</button> or <button class="linkbtn" data-act="moveout" data-id="${r.id}" style="min-height:0;padding:0">plan move-out</button></p>`; }).join('')}
       ${depDue.map((r) => { const by = new Date(fromIso(r.move_out_on).getTime() + 14 * 86400000); const d = dayDiff(by); return `<p class="notice${d <= 3 ? '' : ' info'}">Return ${esc(rentalTitle(r))}’s deposit${r.deposit ? ' (' + money(r.deposit) + ')' : ''} with an itemized list by <strong>${fmtDate(by)}</strong>${d >= 0 ? ' (' + d + ' days)' : ' (overdue)'}. <button class="linkbtn" data-act="moveout" data-id="${r.id}" style="min-height:0;padding:0">Record it</button></p>`; }).join('')}
@@ -614,12 +694,44 @@
     }).join('');
   }
   function saveUnit(u) { const i = S.units.findIndex((x) => x.id === u.id); S.units[i] = u; queue({ kind: 'update', table: 'units', row: { turnover: u.turnover || null, vacant_since: u.vacant_since || null }, match: { id: u.id } }); }
+  function houseHero(md, pct) {
+    const floors = S.units.filter((u) => isFloor(u.name) && !u.exclude_from_tax).sort((a, b) => b.sort - a.sort);
+    const homes = S.units.filter((u) => u.exclude_from_tax);
+    const look = { paid: ['#7FD1B4', 'Paid', true], soon: ['#F2C46B', '', true], late: ['#E46A4B', 'Late', true], up: ['#3A4843', 'Due', false], setup: ['#3A4843', 'No rent set', false], auto: ['#3A4843', 'Due', false] };
+    const H = 56, gap = 14, top = 88, n = Math.max(1, floors.length);
+    const bodyH = n * H + (n + 1) * gap;
+    const wins = floors.map((u, i) => {
+      const row = md.rows.find((x) => x.r.unit_id === u.id);
+      let fill = '#2A3833', label = 'Vacant', lit = false, txt = '#C9D1CC';
+      if (row) { const L = look[row.st.k] || look.up; fill = L[0]; lit = L[2]; label = L[1] || (row.st.label.startsWith('Partial') ? 'Partial' : row.st.label.split(' ·')[0]); txt = lit ? fill : '#C9D1CC'; }
+      const yy = top + gap + i * (H + gap);
+      return { svg: `<rect x="60" y="${yy}" width="180" height="${H}" rx="7" class="${lit ? 'win-lit' : ''}" style="fill:${fill}${lit ? ';filter:drop-shadow(0 0 10px ' + fill + ')' : ''}"></rect><line x1="150" y1="${yy}" x2="150" y2="${yy + H}" style="stroke:#22302B;stroke-width:4"></line>`,
+        chip: `<button type="button" class="hchip" data-act="${row ? 'rental' : 'new-rental-unit'}" ${row ? `data-id="${row.r.id}"` : `data-unit="${u.id}"`}><span>${esc(u.name)}</span><strong style="color:${txt}">${esc(label)}</strong></button>`, label: u.name + ': ' + label };
+    });
+    const h = top + bodyH + 6;
+    return `<section class="hero househero" aria-label="Rent collected">
+      <div class="row between" style="align-items:flex-end">
+        <div class="stack" style="gap:2px"><span class="label">Rent collected</span><span class="big display num">${money(md.received)}</span></div>
+        <span class="pct display">${pct}%</span>
+      </div>
+      <svg width="300" height="${h}" viewBox="0 0 300 ${h}" role="img" aria-label="House: ${esc(wins.map((w) => w.label).join(', '))}" style="align-self:center;max-width:100%">
+        <path d="M150 14 L270 ${top} L30 ${top} Z" style="fill:#2A3833"></path>
+        <rect x="212" y="34" width="18" height="40" style="fill:#2A3833"></rect>
+        <rect x="44" y="${top}" width="212" height="${bodyH}" rx="4" style="fill:#22302B"></rect>
+        ${wins.map((w) => w.svg).join('')}
+      </svg>
+      <div class="hchips">${wins.map((w) => w.chip).join('')}</div>
+      <div class="foot"><span>of ${money(md.expected)} expected</span><span class="${md.late ? 'late' : ''}">${md.late ? md.late + ' late' : 'None late'}</span></div>
+      ${homes.length ? `<div class="homechip"><svg width="28" height="24" viewBox="0 0 56 48" aria-hidden="true"><path d="M28 4 L52 22 L4 22 Z" style="fill:#7FD1B4"></path><rect x="10" y="22" width="36" height="24" rx="2" style="fill:#34403B;stroke:#7FD1B4;stroke-width:3"></rect></svg><span>${esc(homes.map((u) => u.name).join(', '))} · your home, kept separate</span></div>` : ''}
+    </section>`;
+  }
   function rentCard(x) {
     const r = x.r, done = x.st.k === 'paid';
     const unit = unitName(r.unit_id);
     const d = dueOn(r.due_day, S.month);
     const msg = encodeURIComponent('Hi' + (r.tenant_name ? ' ' + r.tenant_name.split(' ')[0] : '') + ', a reminder that ' + monthLabel(S.month).split(' ')[0] + ' rent of ' + money(x.due - x.got) + ' was due ' + (d ? fmtDay(d) : '') + '. Thank you!');
-    return `<li class="bill ${done ? 'paid' : ''}">
+    const justPaid = done && FX.stamp === r.id && Date.now() < FX.stampUntil;
+    return `<li class="bill ${done ? 'paid' : ''}" id="rent-${r.id}">${done ? `<span class="paidstamp${justPaid ? ' slam' : ''}" aria-hidden="true">PAID</span>` : ''}
       <div class="bill-top">
         <button class="check" data-act="rent-toggle" data-id="${r.id}" aria-pressed="${done}" aria-label="${done ? 'Mark not received' : 'Mark received'}: rent from ${esc(rentalTitle(r))}" ${x.due == null ? 'disabled' : ''}>${ICON.check}</button>
         <div class="bill-info">
@@ -1123,7 +1235,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.0</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.1</p>`;
   }
 
   function importCard() {
@@ -1244,7 +1356,18 @@ function setup() {
   function weatherBanner() {
     const notes = (S.household && Array.isArray(S.household.weather)) ? S.household.weather : [];
     const live = notes.filter((n) => !n.until || new Date(n.until) > new Date());
-    return live.map((n) => `<div class="notice weather" role="note"><strong>${esc(n.title)}</strong><br>${esc(n.detail)}</div>`).join('');
+    return live.map((n) => {
+      const kind = n.kind === 'freeze' || /snow|winter|ice|blizzard|freez|cold/i.test(n.title) ? 'snow' : /flood|rain|tropical|hurricane|coastal/i.test(n.title) ? 'rain' : /heat/i.test(n.title) ? 'heat' : 'wind';
+      const parts = kind === 'snow' ? Array.from({ length: 22 }, (_, i) => `<span class="flake" style="left:${(i * 41) % 100}%;animation-duration:${3 + (i % 5) * 0.6}s;animation-delay:${((i * 0.23) % 3).toFixed(2)}s;--dx:${((i * 29) % 40) - 20}px;width:${3 + (i % 4)}px;height:${3 + (i % 4)}px"></span>`).join('')
+        : kind === 'rain' ? Array.from({ length: 34 }, (_, i) => `<span class="drop" style="left:${(i * 41) % 100}%;animation-duration:${0.7 + (i % 4) * 0.15}s;animation-delay:${((i * 0.23) % 3).toFixed(2)}s"></span>`).join('') : '';
+      const icon = kind === 'snow' ? '<path d="M12 2v20M4 6l16 12M20 6L4 18"/><path d="M9 3l3 3 3-3M9 21l3-3 3 3"/>'
+        : kind === 'rain' ? '<path d="M7 15a4 4 0 1 1 .8-7.9A6 6 0 0 1 19 9a3.5 3.5 0 0 1-1 6.9H7z"/><path d="M9 19l-1 2M13 19l-1 2M17 19l-1 2"/>'
+        : kind === 'heat' ? '<circle cx="12" cy="12" r="4.5"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>'
+        : '<path d="M3 8h11a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h8"/>';
+      return `<section class="wx wx-${kind}" role="note" aria-label="Weather: ${esc(n.title)}"><div class="wx-fx" aria-hidden="true">${parts}</div>
+        <div class="wx-row"><svg class="${kind === 'heat' ? 'sun' : ''}" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg>
+        <div class="stack" style="gap:3px"><strong>${esc(n.title)}</strong><span>${esc(n.detail)}</span></div></div></section>`;
+    }).join('');
   }
   // Number shown on the app icon: overdue bills, late rent, upkeep due/overdue, new repair requests
   function attentionCount() {
@@ -1617,13 +1740,14 @@ function setup() {
 
   // ---------- actions ----------
   function findBill(id) { return S.bills.find((b) => b.id === id); }
-  function openSheet(type, id) { S.sheet = { type, id }; S.sheetErr = ''; S.deleteArm = false; render(); }
+  function openSheet(type, id) { S.sheet = { type, id }; S.sheetErr = ''; S.deleteArm = false; FX.sheetEnter = true; render(); }
 
   async function onAct(el) {
     const act = el.dataset.act;
     const id = el.dataset.id;
     switch (act) {
       case 'tab': S.tab = el.dataset.tab; window.scrollTo(0, 0); render(); break;
+      case 'jump': { const c = document.getElementById('bill-' + id); if (c) { c.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' }); c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 1200); } else { S.filter = 'all'; S.unit = 'all'; render(); const d = document.getElementById('bill-' + id); if (d) d.scrollIntoView({ block: 'center' }); } break; }
       case 'go': {
         S.tab = el.dataset.tab; S.sheet = null; window.scrollTo(0, 0); render();
         const a = el.dataset.anchor && document.getElementById(el.dataset.anchor); if (a) a.scrollIntoView({ block: 'start' });
@@ -1639,7 +1763,13 @@ function setup() {
       case 'toggle': {
         const b = findBill(id); const pay = getPay(b, S.month);
         if (pay && pay.paid_at) savePayment(b, S.month, { paid_at: null });
-        else { savePayment(b, S.month, { paid_at: new Date().toISOString(), amount: amountFor(b, pay), method: (pay && pay.method) || (b.autopay ? 'Autopay' : null) }); toast('Marked paid'); }
+        else {
+          savePayment(b, S.month, { paid_at: new Date().toISOString(), amount: amountFor(b, pay), method: (pay && pay.method) || (b.autopay ? 'Autopay' : null) });
+          FX.stamp = b.id; FX.stampUntil = Date.now() + 900;
+          const all = billMonth(S.month, true).rows.filter((x) => !x.b.escrow);
+          if (all.length && all.every((x) => x.pay && x.pay.paid_at)) { toast('All ' + monthLabel(S.month).split(' ')[0] + ' bills paid!'); setTimeout(confetti, 350); } else toast('Marked paid');
+          if (navigator.vibrate) navigator.vibrate(12);
+        }
         render(); break;
       }
       case 'rent-toggle': {
@@ -1647,7 +1777,13 @@ function setup() {
         if (due == null) break;
         const full = rp && Number(rp.amount_received || 0) >= due;
         if (full) saveRentPay(r, S.month, { amount_received: null, received_at: null });
-        else { saveRentPay(r, S.month, { amount_due: due, amount_received: due, received_at: new Date().toISOString() }); toast('Rent marked received'); }
+        else {
+          saveRentPay(r, S.month, { amount_due: due, amount_received: due, received_at: new Date().toISOString() });
+          FX.stamp = r.id; FX.stampUntil = Date.now() + 900;
+          const rm = rentMonth(S.month);
+          if (rm.rows.length && rm.rows.every((x) => x.st.k === 'paid')) { toast('All rent in for ' + monthLabel(S.month).split(' ')[0] + '!'); setTimeout(confetti, 350); } else toast('Rent marked received');
+          if (navigator.vibrate) navigator.vibrate(12);
+        }
         render(); break;
       }
       case 'copy':
@@ -1681,7 +1817,7 @@ function setup() {
       case 'insp-add': { const n = document.getElementById('in-room'); const v = n && n.value.trim(); if (v) { S.inspDraft.items.push({ room: v, condition: 'Good', note: '', photos: [] }); render(); } break; }
       case 'doc-open': { const d = S.documents.find((x) => x.id === id); if (d && d.file_path) openFile(d.file_path); break; }
       case 'sheet-close': case 'sheet-close-bg': S.sheet = null; S.scan = null; render(); break;
-      case 'new-rental-unit': S.sheet = { type: 'new-rental', unit: el.dataset.unit }; S.sheetErr = ''; render(); break;
+      case 'new-rental-unit': S.sheet = { type: 'new-rental', unit: el.dataset.unit }; S.sheetErr = ''; FX.sheetEnter = true; render(); break;
       case 'sheet-delete': {
         if (!S.deleteArm) { S.deleteArm = true; render(); break; }
         const t = S.sheet.type, sid = S.sheet.id;
@@ -2118,6 +2254,50 @@ function setup() {
   window.addEventListener('offline', () => { S.online = false; render(); });
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvt = e; renderSoon(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.view === 'app' && navigator.onLine && !S.sheet) loadAll(); });
+
+  // Drag a sheet down by its handle/header to close it
+  (function sheetDrag() {
+    let y0 = null, sheet = null, dy = 0;
+    document.addEventListener('pointerdown', (e) => {
+      const h = e.target.closest('.grabber, .sheet-head'); if (!h || e.target.closest('button')) return;
+      sheet = h.closest('.sheet'); if (!sheet) return;
+      y0 = e.clientY; dy = 0; sheet.style.transition = 'none';
+    });
+    document.addEventListener('pointermove', (e) => { if (y0 == null || !sheet) return; dy = Math.max(0, e.clientY - y0); sheet.style.transform = 'translateY(' + dy + 'px)'; });
+    const end = () => {
+      if (y0 == null || !sheet) return;
+      sheet.style.transition = ''; y0 = null;
+      if (dy > 110) { sheet.style.transform = 'translateY(110%)'; setTimeout(() => { S.sheet = null; S.scan = null; render(); }, 180); }
+      else sheet.style.transform = '';
+      sheet = null;
+    };
+    document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
+  })();
+  // Pull down at the top of a tab to refresh
+  (function pullToRefresh() {
+    let y0 = null, pull = 0, ind = null;
+    document.addEventListener('touchstart', (e) => {
+      if (S.view !== 'app' || S.sheet || window.scrollY > 0 || e.target.closest('input,textarea,select,.tabbar')) return;
+      y0 = e.touches[0].clientY; pull = 0;
+      ind = document.getElementById('ptr');
+    }, { passive: true });
+    document.addEventListener('touchmove', (e) => {
+      if (y0 == null || !ind) return;
+      pull = Math.max(0, Math.min(110, (e.touches[0].clientY - y0) * 0.5));
+      ind.style.transform = 'translate(-50%,' + (pull - 50) + 'px)'; ind.style.opacity = Math.min(1, pull / 60);
+      ind.classList.toggle('ready', pull > 64);
+    }, { passive: true });
+    document.addEventListener('touchend', async () => {
+      if (y0 == null || !ind) return;
+      y0 = null;
+      if (pull > 64 && navigator.onLine) {
+        ind.classList.add('spinning'); ind.style.transform = 'translate(-50%,16px)';
+        await loadAll();
+        toast('Up to date');
+      }
+      ind.classList.remove('spinning', 'ready'); ind.style.transform = 'translate(-50%,-50px)'; ind.style.opacity = 0; pull = 0;
+    });
+  })();
 
   // ---------- boot ----------
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e));

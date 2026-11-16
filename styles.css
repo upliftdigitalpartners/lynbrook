@@ -233,3 +233,87 @@ textarea.input { padding: 10px 12px; min-height: 80px; resize: vertical; }
 .scanbtn { gap: 8px; height: 48px; border-style: dashed; color: var(--accent); }
 .tbl thead th { text-align: right; }
 .tbl thead th:first-child { text-align: left; }
+
+/* ===== v2.1 visuals ===== */
+.sk { border-radius: 10px; background: linear-gradient(90deg, var(--seg) 0px, var(--surface) 120px, var(--seg) 240px); background-size: 600px 100%; animation: sk 1.2s linear infinite; }
+@keyframes sk { 0% { background-position: -300px 0 } 100% { background-position: 300px 0 } }
+
+/* 20: ring hero */
+.ringhero { align-items: center; }
+.ringwrap { position: relative; width: 190px; height: 190px; }
+.ring-track { fill: none; stroke: var(--hero-track); stroke-width: 14; }
+.ring-arc { fill: none; stroke: var(--bar); stroke-width: 14; stroke-linecap: round; transition: stroke-dashoffset .9s cubic-bezier(.3,.8,.3,1); }
+.ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.ring-center .big { font-size: 28px; }
+.ring-pct { font-size: 13px; color: var(--bar); font-weight: 600; }
+.ringhero .foot { width: 100%; }
+
+/* 22: timeline */
+.tline { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px 14px 10px; display: flex; flex-direction: column; gap: 6px; }
+.tl-track { position: relative; height: 40px; margin: 0 8px; }
+.tl-track::before { content: ''; position: absolute; left: 0; right: 0; top: 26px; height: 4px; border-radius: 99px; background: var(--line-2); }
+.tl-done { position: absolute; left: 0; top: 26px; height: 4px; border-radius: 99px; background: var(--bar); }
+.tl-today { position: absolute; top: 18px; width: 4px; height: 20px; margin-left: -2px; border-radius: 99px; background: var(--ink); animation: tlpulse 1.8s ease-in-out infinite; }
+@keyframes tlpulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
+.tdot { position: absolute; width: 22px; height: 22px; margin-left: -11px; padding: 0; border-radius: 99px; border: 3px solid var(--surface); cursor: pointer; transition: transform .15s; }
+.tdot.rent { border-radius: 6px; }
+.tdot:hover, .tdot:focus-visible { transform: scale(1.25); }
+.tl-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin: 0 2px; }
+.bill.flash { animation: flash 1.2s ease-out; }
+@keyframes flash { 0% { box-shadow: 0 0 0 0 rgba(31,111,92,.55) } 100% { box-shadow: 0 0 0 14px rgba(31,111,92,0) } }
+
+/* 19: PAID stamp + confetti */
+.bill { position: relative; }
+.paidstamp { position: absolute; right: 14px; top: 12px; transform: rotate(-12deg); border: 3px solid var(--accent); color: var(--accent); border-radius: 8px; padding: 0 8px; font: 800 18px/1.4 'Courier New', ui-monospace, monospace; letter-spacing: .12em; opacity: .7; pointer-events: none; }
+.paidstamp.slam { animation: slam .5s cubic-bezier(.2,.8,.3,1.2) both; }
+@keyframes slam { 0% { transform: rotate(-12deg) scale(2.4); opacity: 0 } 55% { transform: rotate(-12deg) scale(.92); opacity: .9 } 100% { transform: rotate(-12deg) scale(1); opacity: .7 } }
+#fx { position: fixed; inset: 0; pointer-events: none; z-index: 40; overflow: hidden; }
+.conf { position: absolute; top: -12px; width: 8px; height: 12px; border-radius: 2px; animation: fall 2.2s cubic-bezier(.2,.6,.4,1) forwards; }
+@keyframes fall { 0% { transform: translate(0,0) rotate(0); opacity: 1 } 100% { transform: translate(var(--dx), 105vh) rotate(var(--r)); opacity: .2 } }
+.check svg path { stroke-dasharray: 30; }
+.bill.paid .check svg path { animation: tick .3s ease-out both; }
+@keyframes tick { from { stroke-dashoffset: 30 } to { stroke-dashoffset: 0 } }
+
+/* 18: house picture */
+.househero { gap: 10px; }
+.win-lit { animation: glow 2.4s ease-in-out infinite; }
+@keyframes glow { 0%,100% { opacity: .6 } 50% { opacity: 1 } }
+.hchips { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.hchip { display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 52px; border-radius: 12px; border: 1px solid #34403B; background: transparent; color: var(--hero-muted); font-size: 12px; cursor: pointer; }
+.hchip strong { font-size: 15px; }
+.homechip { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--hero-muted); border-top: 1px solid #34403B; padding-top: 10px; }
+
+/* 24: sheets + pull to refresh */
+.sheet-bg.enter { animation: fadein .25s ease-out both; }
+.sheet.enter { animation: sheetin .5s cubic-bezier(.2,1.25,.4,1) both; }
+.sheet { transition: transform .25s ease; touch-action: pan-y; }
+.sheet-head, .grabber { cursor: grab; touch-action: none; }
+.grabber { margin: 4px auto 0; }
+@keyframes fadein { from { opacity: 0 } to { opacity: 1 } }
+@keyframes sheetin { from { transform: translateY(100%) } to { transform: translateY(0) } }
+#ptr { position: fixed; top: calc(8px + var(--safe-t)); left: 50%; transform: translate(-50%, -50px); opacity: 0; z-index: 15; width: 44px; height: 44px; border-radius: 99px; background: var(--surface); box-shadow: 0 2px 10px rgba(0,0,0,.15); display: flex; align-items: center; justify-content: center; color: var(--accent); transition: transform .2s, opacity .2s; }
+#ptr.ready svg { transform: rotate(180deg); transition: transform .2s; }
+#ptr.spinning svg { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg) } }
+
+/* 25: animated weather */
+.wx { position: relative; overflow: hidden; border-radius: 18px; padding: 16px; color: #FFFFFF; font-size: 14px; line-height: 1.45; }
+.wx-snow { background: linear-gradient(160deg, #2B4C9B, #4F74C9); }
+.wx-rain { background: linear-gradient(160deg, #24414F, #3E6A80); }
+.wx-heat { background: linear-gradient(160deg, #A3400B, #E07A3A); }
+.wx-wind { background: linear-gradient(160deg, #3D4A55, #66788A); }
+.wx strong { font-size: 16px; }
+.wx-row { position: relative; display: flex; gap: 12px; align-items: flex-start; }
+.wx-row svg { flex: none; }
+.wx-fx { position: absolute; inset: 0; pointer-events: none; }
+.flake { position: absolute; top: 0; border-radius: 99px; background: #FFFFFF; animation: snow linear infinite; }
+.drop { position: absolute; top: 0; width: 2px; height: 14px; border-radius: 2px; background: rgba(255,255,255,.75); animation: rain linear infinite; }
+@keyframes snow { 0% { transform: translate(0,-12px); opacity: 0 } 10% { opacity: 1 } 100% { transform: translate(var(--dx), 160px); opacity: 0 } }
+@keyframes rain { 0% { transform: translate(0,-20px); opacity: 0 } 10% { opacity: .9 } 100% { transform: translate(-14px, 160px); opacity: 0 } }
+.sun { animation: spin 12s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sk, .tl-today, .win-lit, .paidstamp.slam, .bill.paid .check svg path, .sheet.enter, .sheet-bg.enter, .flake, .drop, .sun, #ptr.spinning svg, .bill.flash { animation: none !important; }
+  .ring-arc, .sheet { transition: none !important; }
+  .flake, .drop { display: none; }
+}
