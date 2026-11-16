@@ -445,3 +445,71 @@ textarea.input { padding: 10px 12px; min-height: 80px; resize: vertical; }
 .recap { gap: 10px; }
 .recap h2 { font-size: 19px; }
 .recap-net { margin: 0; font-weight: 600; font-size: 14px; padding-top: 8px; border-top: 1px solid var(--line-2); }
+
+/* ===== v2.6 friendlier layout ===== */
+button:active, .btn:active, .chip:active, .tab:active { transform: scale(.97); }
+.btn, .chip, .tab, .check { transition: transform .08s ease, background .15s; }
+.addbtn { display: inline-flex; align-items: center; gap: 4px; height: 44px; padding: 0 16px 0 12px; border: 0; border-radius: 99px; background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 15px; cursor: pointer; }
+.addbtn svg { width: 20px; height: 20px; }
+.topbar h1 { font-size: 30px; }
+
+/* compact bills hero */
+.billhero { padding: 16px 18px; gap: 10px; }
+.billhero-row { display: flex; align-items: center; gap: 16px; }
+.ringwrap.sm { width: 112px; height: 112px; flex: none; }
+.ringwrap.sm .ring-track, .ringwrap.sm .ring-arc { stroke-width: 11; }
+.ringwrap.sm .ring-pct { font-family: var(--serif); font-size: 22px; font-weight: 600; color: var(--hero-ink); }
+.tiny { font-size: 11px; color: var(--hero-muted); }
+.billhero .big { font-size: 30px; line-height: 1.1; }
+.billhero .hint { color: #F2D48C; font-size: 13px; justify-content: flex-start; }
+.hero .late { color: #FFB98F; font-weight: 600; }
+
+/* add bar */
+.quick form { align-items: center; }
+.cambtn { border: 1px solid var(--line); background: var(--surface); color: var(--accent); height: 48px; width: 48px; cursor: pointer; flex: none; }
+.cambtn svg { width: 22px; height: 22px; }
+.quick .micbtn { flex: none; }
+
+/* sections */
+.section-h { display: flex; align-items: center; gap: 8px; margin: 6px 0 -4px; font-size: 18px; }
+.count { display: inline-flex; min-width: 24px; height: 22px; padding: 0 7px; align-items: center; justify-content: center; border-radius: 99px; background: var(--chip); color: var(--muted-2); font-family: Inter, sans-serif; font-size: 12px; font-weight: 700; }
+.chips { margin-top: -4px; }
+.chip { height: 40px; font-size: 13px; padding: 0 14px; }
+
+/* paid list */
+.paidfold { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+.paidfold > summary { list-style: none; display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 0 16px; cursor: pointer; font-weight: 650; }
+.paidfold > summary::-webkit-details-marker { display: none; }
+.paidfold > summary .num { margin-left: auto; font-weight: 600; }
+.prows { list-style: none; margin: 0; padding: 0 8px 8px; display: flex; flex-direction: column; }
+.prow { position: relative; display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-top: 1px solid var(--line-2); background: var(--surface); }
+.check.sm { width: 40px; height: 40px; border-radius: 12px; }
+.check.sm svg { width: 18px; height: 18px; }
+.prow-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 0; border: 0; background: transparent; padding: 6px 0; text-align: left; font: inherit; color: inherit; cursor: pointer; min-height: 44px; justify-content: center; }
+.prow-name { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.prow-amt { font-family: var(--serif); font-weight: 600; font-size: 16px; color: var(--muted); }
+.paidstamp.mini { top: 50%; right: 90px; margin-top: -13px; font-size: 13px; padding: 0 6px; }
+.chev { margin-left: auto; width: 10px; height: 10px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform .2s; flex: none; margin-right: 4px; }
+details[open] > summary .chev { transform: rotate(-135deg); }
+.paidfold > summary .num + .chev { margin-left: 10px; }
+
+/* full card stamp no longer covers labels */
+.bill .paidstamp { top: auto; bottom: 16px; right: 16px; font-size: 15px; }
+
+/* folds */
+.fold { padding: 0; gap: 0; }
+.fold > summary { list-style: none; display: flex; align-items: center; gap: 10px; min-height: 60px; padding: 0 16px; cursor: pointer; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary h2 { margin: 0; font-size: 18px; }
+.fold-body { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 12px; }
+.fold-body > .card { border: 0; padding: 0; background: transparent; box-shadow: none; }
+.fold-body > .card > .row:first-child > h2 { display: none; }
+details.inner > summary { cursor: pointer; color: var(--accent); font-weight: 600; font-size: 14px; min-height: 40px; display: flex; align-items: center; }
+
+/* compact "needs details" editing row */
+.qedit { display: flex; align-items: flex-end; gap: 8px; }
+.qedit .qe-day { flex: 0 0 76px; }
+.qedit .qe-amt { flex: 1; min-width: 0; }
+.qedit .input { min-height: 46px; }
+.qedit .qe-btn { flex: none; height: 46px; padding: 0 14px; }
+.qedit label { font-size: 12px; }

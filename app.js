@@ -403,8 +403,9 @@
     return `<section class="quick" aria-label="Quick add">
       <form class="row" data-form="quick" style="gap:6px">
         <label for="qa-text" class="sr">Quick add</label>
-        <input class="input" id="qa-text" name="text" placeholder="e.g. paid PSEG 2nd floor $96 yesterday" value="${esc(q.text || '')}" autocomplete="off" enterkeyhint="go" style="flex:1">
-        ${mic}<button class="btn primary-soft" type="submit" ${q.busy ? 'disabled' : ''}>${q.busy ? '…' : 'Add'}</button>
+        <input class="input" id="qa-text" name="text" placeholder="e.g. paid PSEG $96" value="${esc(q.text || '')}" autocomplete="off" enterkeyhint="go" style="flex:1;min-width:0">
+        ${mic}<label class="iconbtn cambtn" aria-label="Scan a paper bill" title="Scan a paper bill"><input type="file" accept="image/*" capture="environment" class="sr" data-change="scan-bill">${ICON.camera}</label>
+        <button class="btn primary-soft" type="submit" ${q.busy ? 'disabled' : ''}>${q.busy ? '…' : 'Add'}</button>
       </form>
       ${q.error ? `<p class="err">${esc(q.error)}</p>` : ''}
       ${q.actions ? `<div class="quick-confirm">
@@ -863,7 +864,7 @@
     return `<div class="shell">
       <header class="topbar">
         <div class="topbar-row"><span class="eyebrow">${esc(addr)}</span>${offline}</div>
-        <div class="topbar-row"><h1 class="display">${esc(titles[S.tab])}</h1>${add ? `<button class="iconbtn addbtn" data-act="${add[0]}" aria-label="${add[1]}">${ICON.plus}</button>` : ''}</div>
+        <div class="topbar-row"><h1 class="display">${esc(titles[S.tab])}</h1>${add ? `<button class="addbtn" data-act="${add[0]}" aria-label="${add[1]}">${ICON.plus}<span>Add</span></button>` : ''}</div>
       </header>
       <main class="main">${body}</main>
       <nav class="tabbar" aria-label="App sections"><div class="tabbar-inner">${tabs}</div></nav>
@@ -928,29 +929,86 @@
   }
 
   // ----- Bills tab -----
+  S.fold = (() => { try { return JSON.parse(localStorage.getItem('eh-fold') || '{}'); } catch (_) { return {}; } })();
+  function isOpen(key, dflt) { return S.fold[key] != null ? S.fold[key] : !!dflt; }
+  function fold(key, title, inner, dflt, extraHead) {
+    return `<details class="card fold" data-fold="${key}" ${isOpen(key, dflt) ? 'open' : ''}>
+      <summary><h2>${title}</h2>${extraHead || ''}<span class="chev" aria-hidden="true"></span></summary>
+      <div class="fold-body">${inner}</div></details>`;
+  }
+  // Turn plain <section class="card" aria-label="X"><h2>..</h2>...</section> blocks into folds
+  function foldSections(html, map) {
+    Object.keys(map).forEach((label) => {
+      const re = new RegExp('<section class="card" aria-label="' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"[^>]*>\\s*<h2>([\\s\\S]*?)</h2>');
+      const m = html.match(re); if (!m) return;
+      const start = m.index, bodyStart = start + m[0].length;
+      const end = html.indexOf('</section>', bodyStart); if (end < 0) return;
+      const key = 's-' + label.toLowerCase().replace(/[^a-z]+/g, '-');
+      html = html.slice(0, start) + fold(key, m[1], html.slice(bodyStart, end), map[label]) + html.slice(end + '</section>'.length);
+    });
+    return html;
+  }
+
+  // ----- Bills tab -----
+  function billsHero(md, pct) {
+    const left = md.total - md.paid;
+    const R = 48, C = 2 * Math.PI * R;
+    const off = (C * (md.total > 0 ? Math.max(0, left) / md.total : 0)).toFixed(1);
+    return `<section class="hero billhero" aria-label="Still to pay">
+      <div class="billhero-row" data-ring="${esc('bills-' + S.month + '-' + S.unit)}" data-to="${left}" data-total="${md.total || 1}">
+        <div class="ringwrap sm"><svg width="112" height="112" viewBox="0 0 112 112" role="img" aria-label="${pct}% paid">
+          <circle cx="56" cy="56" r="${R}" class="ring-track"></circle>
+          <circle cx="56" cy="56" r="${R}" class="ring-arc" data-c="${C.toFixed(1)}" transform="rotate(-90 56 56)" style="stroke-dasharray:${C.toFixed(1)};stroke-dashoffset:${off}"></circle></svg>
+          <div class="ring-center"><span class="ring-pct">${pct}%</span><span class="tiny">paid</span></div></div>
+        <div class="stack" style="gap:2px;min-width:0">
+          <span class="label">Still to pay</span>
+          <span class="big display num ring-num">${money(left)}</span>
+          <span class="small" style="color:var(--hero-muted)">${money(md.paid)} of ${money(md.total)} paid</span>
+          ${md.overdue ? `<span class="small late">${md.overdue} overdue · ${money(md.overdueAmt)}</span>` : ''}
+        </div>
+      </div>
+      ${md.setup ? `<div class="foot hint">+ ${md.setup} ${md.setup === 1 ? 'bill' : 'bills'} with no amount yet</div>` : ''}
+      ${(() => { const n = billsStreak(); return n >= 2 ? `<div class="foot streak-dark">${streakDots(n)}<span>All bills on time ${n} months in a row</span></div>` : ''; })()}
+    </section>`;
+  }
+  function paidRow(r) {
+    const b = r.b; const justPaid = FX.stamp === b.id && Date.now() < FX.stampUntil;
+    return `<li class="prow swipe" id="bill-${b.id}" data-swipe-left="bill" data-id="${b.id}" data-paid="true">
+      <button class="check sm" data-act="toggle" data-id="${b.id}" aria-pressed="true" aria-label="Mark unpaid: ${esc(billTitle(b))}, ${esc(unitName(b.unit_id))}">${ICON.check}</button>
+      <button class="prow-main" data-act="bill" data-id="${b.id}" aria-label="Details for ${esc(billTitle(b))}">
+        <span class="prow-name">${esc(billTitle(b))} <span class="muted">· ${esc(unitName(b.unit_id))}</span></span>
+        <span class="small muted">${esc(r.st.label)}</span>
+      </button>
+      <span class="prow-amt num">${money(r.amt)}</span>
+      ${justPaid ? '<span class="paidstamp mini slam" aria-hidden="true">PAID</span>' : ''}
+    </li>`;
+  }
   function billsTab() {
     const md = billMonth(S.month);
     const pct = md.total > 0 ? Math.round((md.paid / md.total) * 100) : 0;
-    const unpaid = md.rows.filter((r) => !(r.pay && r.pay.paid_at)).length;
-    const visible = md.rows.filter((r) => S.filter === 'all' ? true : S.filter === 'paid' ? (r.pay && r.pay.paid_at) : !(r.pay && r.pay.paid_at));
     const floors = S.units.filter((u) => isFloor(u.name));
     const unitChips = [['all', 'Everything'], ['shared', 'Shared']].concat(floors.map((u) => [u.id, u.name]))
       .map(([id, l]) => `<button class="chip" data-act="unit" data-unit="${esc(id)}" aria-pressed="${S.unit === id}">${esc(l)}</button>`).join('');
-    const filt = [['all', 'All ' + md.rows.length], ['unpaid', 'Unpaid ' + unpaid], ['paid', 'Paid ' + (md.rows.length - unpaid)]]
-      .map(([id, l]) => `<button data-act="filter" data-filter="${id}" aria-pressed="${S.filter === id}">${l}</button>`).join('');
+    const isPaid = (r) => !!(r.pay && r.pay.paid_at);
+    const attention = md.rows.filter((r) => !isPaid(r) && ['late', 'soon', 'setup'].includes(r.st.k));
+    const later = md.rows.filter((r) => !isPaid(r) && !['late', 'soon', 'setup'].includes(r.st.k));
+    const paid = md.rows.filter(isPaid);
+    const paidSum = paid.reduce((t, r) => t + (r.amt || 0), 0);
+    const list = (rows) => `<ul class="bills">${rows.map(billCard).join('')}</ul>`;
+    const body = !md.rows.length
+      ? emptyState('empty', 'No bills here yet', 'Add one, or scan a paper bill.', '<button class="btn primary-soft" data-act="new-bill">Add a bill</button>')
+      : (attention.length ? `<h2 class="section-h">Needs attention <span class="count">${attention.length}</span></h2>${list(attention)}` : '')
+        + (later.length ? `<h2 class="section-h">Coming up <span class="count">${later.length}</span></h2>${list(later)}` : '')
+        + (!attention.length && !later.length ? emptyState('done', 'All caught up', 'Every ' + monthLabel(S.month).split(' ')[0] + ' bill is paid. Enjoy the quiet.') : '')
+        + (paid.length ? `<details class="paidfold" data-fold="b-paid" ${isOpen('b-paid', false) ? 'open' : ''}><summary><span>Paid <span class="count">${paid.length}</span></span><span class="num muted">${money(paidSum)}</span><span class="chev" aria-hidden="true"></span></summary><ul class="prows">${paid.map(paidRow).join('')}</ul></details>` : '');
     return `${weatherBanner()}${setupBanner()}${monthNav()}
-      ${ringHero('bills-' + S.month + '-' + S.unit, 'Still to pay', md.total - md.paid, md.total, pct, money(md.paid) + ' of ' + money(md.total) + ' paid', md.overdue ? md.overdue + ' overdue · ' + money(md.overdueAmt) : 'None overdue', md.overdue)}
-      ${timeline(md)}
-      ${md.setup ? `<p class="notice">${md.setup} ${md.setup === 1 ? 'bill needs' : 'bills need'} an amount or due day for ${monthLabel(S.month, true)}. Fill them in on the card.</p>` : ''}
+      ${billsHero(md, pct)}
       ${quickCard()}
-      <label class="btn block scanbtn"><input type="file" accept="image/*" capture="environment" class="sr" data-change="scan-bill"> ${ICON.camera} Scan a paper bill</label>
-      <div class="chips" role="group" aria-label="Show floor">${unitChips}</div>
-      <div class="seg" role="group" aria-label="Filter bills">${filt}</div>
-      ${visible.length ? `<ul class="bills">${visible.map(billCard).join('')}</ul>` :
-        (S.filter === 'paid' ? emptyState('calm', 'Nothing paid yet', 'Tick a bill, or swipe it right, when you pay it.')
-          : S.filter === 'unpaid' ? emptyState('done', 'All caught up', 'Every ' + monthLabel(S.month).split(' ')[0] + ' bill is paid. Enjoy the quiet.')
-          : emptyState('empty', 'No bills here yet', 'Add one, or scan a paper bill.', '<button class="btn primary-soft" data-act="new-bill">Add a bill</button>'))}`;
+      ${timeline(md)}
+      <div class="chips" role="group" aria-label="Show place">${unitChips}</div>
+      ${body}`;
   }
+
 
   function billCard(r) {
     const b = r.b, paid = !!(r.pay && r.pay.paid_at);
@@ -969,15 +1027,10 @@
           ${yoyLabel(b, r.amt) ? `<span class="small muted">${yoyLabel(b, r.amt)}</span>` : ''}
         </div>
       </div>
-      ${editing ? `<div class="stack">
-          <div class="grid2">
-            <div class="field"><label for="d-${b.id}">Due day</label><input class="input num" id="d-${b.id}" type="number" inputmode="numeric" min="1" max="31" placeholder="—" value="${b.due_day || ''}" data-change="due" data-id="${b.id}"></div>
-            <div class="field"><label for="a-${b.id}">Amount ($)</label><input class="input num" id="a-${b.id}" type="text" inputmode="decimal" placeholder="0.00" value="${r.amt != null ? r.amt.toFixed(2) : ''}" data-change="amount" data-id="${b.id}"></div>
-          </div>
-          <div class="btns">
-            ${complete ? `<button class="btn" data-act="done" style="flex:1">Done</button>` : ''}
-            <button class="btn" data-act="bill" data-id="${b.id}" style="flex:1">Details</button>
-          </div>
+      ${editing ? `<div class="qedit">
+          <div class="field qe-day"><label for="d-${b.id}">Due day</label><input class="input num" id="d-${b.id}" type="number" inputmode="numeric" min="1" max="31" placeholder="—" value="${b.due_day || ''}" data-change="due" data-id="${b.id}"></div>
+          <div class="field qe-amt"><label for="a-${b.id}">Amount ($)</label><input class="input num" id="a-${b.id}" type="text" inputmode="decimal" placeholder="0.00" value="${r.amt != null ? r.amt.toFixed(2) : ''}" data-change="amount" data-id="${b.id}"></div>
+          ${complete ? `<button class="btn qe-btn" data-act="done">Done</button>` : `<button class="btn qe-btn" data-act="bill" data-id="${b.id}" aria-label="More details for ${esc(billTitle(b))}">More</button>`}
         </div>` : `<div class="bill-sum">
           ${spark(b)}<div class="stack" style="gap:0"><span class="amt display num">${money(r.amt)}</span><span class="small muted">${r.due ? 'Due ' + fmtDay(r.due) : ''}${monthsLabel(b) ? ' · ' + monthsLabel(b) + ' only' : ''}${b.autopay ? ' · Autopay' : ''}${r.pay && r.pay.source === 'email' ? ' · from email' : ''}</span></div>
           <div class="btns">
@@ -1112,7 +1165,7 @@
         return `<div class="row between wrap"><div class="stack" style="gap:2px"><strong>${esc(billTitle(b))}</strong><span class="pill ${st.k}" style="margin-top:0">${esc(st.label)}</span></div>
           <div class="row"><span class="display num" style="font-size:20px;font-weight:650">${a != null ? money(a) : '—'}</span><button class="btn" data-act="bill" data-id="${b.id}">Details</button></div></div>`; }).join('')}
       ${mort.map(mortgageStats).join('')}
-      <p class="small muted">Mark it paid on the Bills tab. Add principal, interest and balance from each statement under Details for equity and tax totals.</p>
+      <p class="small muted">Tip: add each statement’s principal and interest under Details.</p>
     </section>`;
   }
   function mortgageStats(b) {
@@ -1122,7 +1175,7 @@
     const latest = Object.values(S.payments).filter((p) => p.bill_id === b.id && p.balance_after != null).sort((x, y) => y.period.localeCompare(x.period))[0];
     const bal = latest ? Number(latest.balance_after) : (b.loan_balance != null ? Number(b.loan_balance) : null);
     const eq = b.home_value != null && bal != null ? Number(b.home_value) - bal : null;
-    if (bal == null && !sum('interest') && !sum('principal')) return `<p class="small muted">Add the loan balance and rate under Details to see equity and interest paid.</p>`;
+    if (bal == null && !sum('interest') && !sum('principal')) return `<p class="small muted">Add the loan balance and rate under Details to see equity.</p>`;
     return `<div class="grid2">
       <div class="stat"><span class="small muted">Loan balance</span><span class="v display num">${bal != null ? money0(bal) : '—'}</span>${b.loan_rate ? `<span class="small muted">${Number(b.loan_rate)}% rate</span>` : ''}</div>
       <div class="stat"><span class="small muted">Estimated equity</span><span class="v display num">${eq != null ? money0(eq) : '—'}</span>${eq != null && b.home_value ? `<span class="small muted">${Math.round((eq / Number(b.home_value)) * 100)}% of ${money0(b.home_value)}</span>` : '<span class="small muted">Add home value</span>'}</div>
@@ -1400,11 +1453,12 @@
         <div class="stat"><span class="small muted">Still to pay</span><span class="v display num">${money(Math.max(0, sp.homeTotal - sp.homePaid))}</span><span class="small muted">${unpaid.length} ${unpaid.length === 1 ? 'bill' : 'bills'}${unpaid.some((r) => r.st.k === 'setup') ? ' · some need amounts' : ''}</span></div>
       </div>
       ${sp.homeRows.map((r) => `<div class="row between small"><span>${esc(billTitle(r.b))}</span><span class="row" style="gap:8px"><strong class="num">${r.amt != null ? money(r.amt) : '—'}</strong><span class="pill ${r.st.k}" style="margin:0">${esc(r.st.label)}</span></span></div>`).join('')}
-      <div class="hist">${hist.map((h) => `<div class="col ${h.k === S.month ? 'cur' : ''}"><span class="num">${h.t ? '$' + Math.round(h.t) : ''}</span><div class="b" style="height:${Math.round((h.t / max) * 100)}%"></div><span>${monthLabel(h.k, true)}</span></div>`).join('')}</div>
+      ${hist.some((h) => h.t) ? `<div class="hist">${hist.map((h) => `<div class="col ${h.k === S.month ? 'cur' : ''}"><span class="num">${h.t ? '$' + Math.round(h.t) : ''}</span><div class="b" style="height:${Math.round((h.t / max) * 100)}%"></div><span>${monthLabel(h.k, true)}</span></div>`).join('')}</div>` : ''}
       <p class="small muted">Your home’s bills are kept out of the rental totals above and out of the tax report.</p>
     </section>`;
   }
-  function summaryTab() {
+  function summaryTab() { return foldSections(summaryTabRaw(), { 'Money in and out, last 6 months': true, 'Bills by place': false, 'Cash-flow forecast': true }); }
+  function summaryTabRaw() {
     const sp = billSplit(S.month);
     const md = { paid: sp.rentalPaid };
     const rm = rentMonth(S.month);
@@ -1431,7 +1485,12 @@
     const fMax = Math.max(1, ...byFloor.map((g) => g.total));
     const byCat = group((b) => b.category);
     const propName = (S.household && (S.household.address || '').split(',')[0]) || 'Rental';
+    const ch = (r) => `<div class="legend small"><span><i class="sw in"></i>Rent in</span><span><i class="sw out"></i>Bills + upkeep out</span></div>
+        <div class="hist2">${rows.map((r) => `<div class="col ${r.k === S.month ? 'cur' : ''}">
+          <div class="pair"><div class="b in" style="height:${Math.round((r.inc / max) * 100)}%" title="In ${money0(r.inc)}"></div><div class="b out" style="height:${Math.round((r.out / max) * 100)}%" title="Out ${money0(r.out)}"></div></div>
+          <span>${monthLabel(r.k, true)}</span></div>`).join('')}</div>`;
     return `${monthNav()}
+      ${recapCard()}
       <h2 class="section-h" style="margin:0">${esc(propName)} · rental${homes.length ? ' <span class="small muted" style="font-weight:500">(without ' + esc(homes.join(', ')) + ')</span>' : ''}</h2>
       <div class="grid2">
         <div class="stat"><span class="small muted">Rent collected</span><span class="v display num">${money(rm.received)}</span></div>
@@ -1445,23 +1504,20 @@
         <div class="hist2">${rows.map((r) => `<div class="col ${r.k === S.month ? 'cur' : ''}">
           <div class="pair"><div class="b in" style="height:${Math.round((r.inc / max) * 100)}%" title="In ${money0(r.inc)}"></div><div class="b out" style="height:${Math.round((r.out / max) * 100)}%" title="Out ${money0(r.out)}"></div></div>
           <span>${monthLabel(r.k, true)}</span></div>`).join('')}</div>
-        <table class="tbl"><thead><tr><th scope="col">Month</th><th scope="col">In</th><th scope="col">Out</th><th scope="col">Net</th></tr></thead><tbody>
+        <details class="inner" data-fold="inout-table" ${isOpen('inout-table', false) ? 'open' : ''}><summary>See the numbers</summary><table class="tbl"><thead><tr><th scope="col">Month</th><th scope="col">In</th><th scope="col">Out</th><th scope="col">Net</th></tr></thead><tbody>
           ${rows.slice().reverse().map((r) => `<tr><th scope="row">${monthLabel(r.k, true)}</th><td class="num">${money0(r.inc)}</td><td class="num">${money0(r.out)}</td><td class="num" style="color:${r.net < 0 ? 'var(--late-fg)' : 'inherit'}">${r.net < 0 ? '−' : ''}${money0(Math.abs(r.net))}</td></tr>`).join('')}
-        </tbody></table>
+        </tbody></table></details>
       </section>
-      ${recapCard()}
       <button class="askcard" data-act="ask-open"><span class="askicon" aria-hidden="true">✦</span><span class="stack" style="gap:2px;text-align:left"><strong>Ask about your house</strong><span class="small muted">“What did I spend on repairs this year?”</span></span><span aria-hidden="true">›</span></button>
       ${forecastCard()}
       ${homeCard()}
       <section class="card" aria-label="Bills by place">
-        <h2>Bills by place · ${monthLabel(S.month, true)}</h2>
+        <h2>Breakdown · ${monthLabel(S.month, true)}</h2><p class="lab small" style="margin:0">By place</p>
         ${byFloor.map((g) => `<div class="stack" style="gap:6px"><div class="row between small"><span>${esc(g.name)} <span class="muted">· ${g.n} ${g.n === 1 ? 'bill' : 'bills'}</span></span><strong class="num">${money(g.total)}</strong></div><div class="meter"><div style="width:${Math.max(2, Math.round((g.total / fMax) * 100))}%"></div></div></div>`).join('')}
-      </section>
-      <section class="card" aria-label="Bills by category">
-        <h2>Bills by category · ${monthLabel(S.month, true)}</h2>
+        <p class="lab small" style="margin:6px 0 0">By category</p>
         ${byCat.map((g) => `<div class="row between small"><span>${esc(g.name)} <span class="muted">· ${g.n}</span></span><strong class="num">${money(g.total)}</strong></div>`).join('')}
       </section>
-      ${taxCard()}`;
+      ${fold('tax', 'Tax report · ' + (S.taxYear || Number(S.month.slice(0, 4))), taxCard(), false)}`;
   }
 
   // ----- Tax report (Schedule E style) -----
@@ -1559,6 +1615,9 @@
 
   // ----- Settings -----
   function settingsTab() {
+    return foldSections(settingsTabRaw(), { 'Email bill import': false, 'Install': !isStandalone(), 'Calendar and export': false, 'House': false, 'Family password': false });
+  }
+  function settingsTabRaw() {
     const m = S.member || {};
     const hours = Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${h === m.remind_hour ? 'selected' : ''}>${((h + 11) % 12) + 1}:00 ${h < 12 ? 'AM' : 'PM'}</option>`).join('');
     const days = [0, 1, 2, 3, 4, 5, 7].map((d) => `<option value="${d}" ${d === m.remind_days ? 'selected' : ''}>${d === 0 ? 'Only on the due day' : d + (d === 1 ? ' day' : ' days') + ' before'}</option>`).join('');
@@ -1631,7 +1690,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.5</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.6</p>`;
   }
 
   function importCard() {
@@ -2687,6 +2746,10 @@ function setup() {
     e.preventDefault(); onAct(el);
   });
   document.addEventListener('change', (e) => { if (e.target.dataset && e.target.dataset.change) onChange(e.target); });
+  document.addEventListener('toggle', (e) => {
+    const d = e.target; if (!d || !d.dataset || !d.dataset.fold) return;
+    S.fold[d.dataset.fold] = d.open; try { localStorage.setItem('eh-fold', JSON.stringify(S.fold)); } catch (_) {}
+  }, true);
   document.addEventListener('input', (e) => { if (e.target.dataset && e.target.dataset.input === 'docq') { S.docQuery = e.target.value; render(); } });
   document.addEventListener('submit', (e) => { e.preventDefault(); onSubmit(e.target); });
   document.addEventListener('keydown', (e) => {
