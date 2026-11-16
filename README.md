@@ -19,7 +19,7 @@ A rent, bill and home-upkeep tracker for a two-family house, built as an install
 - Cash-flow forecast (next 3 months, rental vs home, tight-month warnings); year-over-year bill comparison with weather adjustment (Open-Meteo heating degree days)
 - Vacancy mode: days vacant, rent missed, turnover checklist; tenant page shows how to pay (Zelle)
 - Scan a paper bill: photo → Groq vision model, default `qwen/qwen3.8-27b`, auto-switches if Groq retires it (`scan-bill` function, needs the `GROQ_API_KEY` Supabase secret; optional `GROQ_VISION_MODEL`) → matched bill prefilled, photo attached
-- AI (Groq, via the `assist` function): quick add from typed or spoken notes (confirmed before saving), Ask about your house (answers from your own records, no account numbers sent), snap a receipt into the repair log
+- AI (Groq, via the `assist` function): quick add from typed or spoken notes (confirmed before saving), Ask about your house (answers from your own records, no account numbers sent), snap a receipt into the repair log, explain a bill that changed (with weather), monthly plain-English recap
 - Mortgage payoff planner: extra monthly / lump sum savings and refinance break-even
 - Weather: twice-daily National Weather Service check for Lynbrook; freeze and storm/flood/wind/heat alerts push what to do and show as a banner; a freeze pulls the outdoor-faucet task forward
 - App icon badge: overdue bills + late rent + upkeep due + new repair requests

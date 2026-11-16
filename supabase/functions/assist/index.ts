@@ -62,6 +62,20 @@ Answer the question using ONLY the JSON data provided. Be brief and concrete: le
 If the data doesn't contain the answer, say so plainly and suggest what to record in the app. Use $ with 2 decimals for money. Today is {TODAY}.
 Do not give legal or tax advice beyond general pointers; suggest an accountant or attorney for specifics.`;
 
+const EXPLAIN_PROMPT = `You help a landlord understand why a utility bill changed. You get JSON with the bill (name, category, place),
+its monthly amounts for up to 13 months, this month's amount, the same month last year, and heating degree days (HDD) for the usage month this year vs last year when known
+(more HDD = colder = more heating). The house is a two-family in Lynbrook, NY (Long Island). Today is {TODAY}.
+Return ONLY JSON: {"headline": one short sentence with the size of the change and the most likely cause,
+"reasons": [2-3 short likely causes, most likely first, each under 18 words, grounded in the data (season, weather, usage trend, rate changes, estimated vs actual reads, billing period length)],
+"checks": [2-3 short practical things to check or do, under 14 words each]}.
+Don't invent numbers that aren't in the data. If the change is normal for the season, say so.
+If hdd_usage_month is null you do NOT know the weather: say "possibly colder", never state it was colder.
+Write for a homeowner: never use the terms HDD or heating degree days; say "colder" or "milder" instead.`;
+
+const RECAP_PROMPT = `Write a plain-English monthly recap for a landlord's house app. Data is JSON for one month (rental at 110 Evergreen Ave, Lynbrook NY, two floors; the owner's own home "Cedarcroft" is listed separately and is not rental).
+Return ONLY JSON: {"title": "<Month> in a sentence" (max 10 words), "bullets": [3-5 short bullets: rent (who paid, anything late or partial), bills (total, anything unusual vs usual or last year), upkeep/repairs done and costs, what's coming up next month], "net": one short line with rental money in vs out and net}.
+Use $ amounts with no cents unless under $100. Be specific with names and numbers from the data. Friendly, calm, no exclamation marks. Don't invent anything.`;
+
 const RECEIPT_PROMPT = `Read this photo of a receipt or invoice for home repairs/maintenance.
 Return ONLY JSON: {"vendor": string|null, "date": "YYYY-MM-DD"|null, "total": number|null, "summary": short description of what was bought or done (max 8 words)|null,
 "category": one of "Plumbing","Electrical","Heating & cooling","Appliances","Exterior","Yard","Cleaning","Pest control","Safety","Other", "confidence":"high"|"medium"|"low"}.
@@ -103,6 +117,14 @@ Deno.serve(async (req) => {
         { role: 'user', content: q },
       ], false, 700);
       return json({ answer: answer.trim(), model });
+    }
+    if (body.mode === 'explain' || body.mode === 'recap') {
+      const model = await pick(TEXT_MODEL, [/gpt-oss-120b/, /gpt-oss/, /qwen/, /llama/]);
+      const prompt = (body.mode === 'explain' ? EXPLAIN_PROMPT : RECAP_PROMPT).replace('{TODAY}', today);
+      const out = await chat(model, [{ role: 'system', content: prompt }, { role: 'user', content: JSON.stringify(body.context ?? {}).slice(0, 30000) }], true, 700);
+      const j = parseJson(out);
+      if (!j) return json({ error: 'Couldn’t put that together. Try again.' }, 422);
+      return json(Object.assign(j, { model }));
     }
     if (body.mode === 'receipt') {
       const b64 = String(body.image ?? ''); const type = String(body.type ?? 'image/jpeg');

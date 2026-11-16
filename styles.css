@@ -436,3 +436,12 @@ textarea.input { padding: 10px 12px; min-height: 80px; resize: vertical; }
 @keyframes typing { 0%,80%,100% { opacity: .3; transform: translateY(0) } 40% { opacity: 1; transform: translateY(-3px) } }
 .chat .btns .chip { height: auto; min-height: 40px; padding: 8px 12px; white-space: normal; text-align: left; }
 @media (prefers-reduced-motion: reduce) { .micbtn.on, .msg.typing span { animation: none; } }
+
+/* ===== v2.5 explain + recap ===== */
+.askmini { gap: 8px; justify-content: flex-start; }
+.askmini .askicon { width: 28px; height: 28px; border-radius: 8px; font-size: 15px; }
+.explain { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 14px; background: var(--paid-bg); color: var(--ink); }
+.explain ul, .recap-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.recap { gap: 10px; }
+.recap h2 { font-size: 19px; }
+.recap-net { margin: 0; font-weight: 600; font-size: 14px; padding-top: 8px; border-top: 1px solid var(--line-2); }
