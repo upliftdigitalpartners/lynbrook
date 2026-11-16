@@ -47,6 +47,11 @@
         <div class="stack" style="gap:2px"><span class="label">${esc(monthName(thisPeriod()))} · left to pay</span><span class="big display num">${money(left)}</span></div>
         <div class="foot"><span>Rent ${money(due)} · due the ${ord(d.due_day)}${d.grace_days ? ' (' + d.grace_days + '-day grace)' : ''}</span></div>
       </section>${status}` : ''}
+      ${d.pay_zelle && left > 0 ? `<section class="card" aria-label="How to pay"><h2>How to pay</h2>
+        <p class="lead">Send <strong>${money(left)}</strong> with Zelle in your bank app to:</p>
+        <div class="row between wrap" style="gap:8px"><strong style="font-size:18px;word-break:break-all">${esc(d.pay_zelle)}</strong><button type="button" class="btn" id="copy-zelle">Copy</button></div>
+        ${d.pay_note ? `<p class="small muted">${esc(d.pay_note)}</p>` : `<p class="small muted">Memo: ${esc(monthName(thisPeriod()).split(' ')[0])} rent${d.unit ? ', ' + esc(d.unit) : ''}</p>`}
+      </section>` : ''}
       ${d.payments.length ? `<section class="card" aria-label="Payment history"><h2>Payment history</h2>
         <table class="tbl"><thead><tr><th scope="col">Month</th><th scope="col">Rent</th><th scope="col">Paid</th></tr></thead><tbody>
         ${d.payments.map((p) => `<tr><th scope="row">${esc(monthName(p.period))}</th><td class="num">${money(p.amount_due)}</td><td class="num">${money(p.amount_received)}</td></tr>`).join('')}
@@ -84,6 +89,11 @@
     });
   }
 
+  document.addEventListener('click', async (e) => {
+    if (e.target && e.target.id === 'copy-zelle') {
+      try { await navigator.clipboard.writeText(data.pay_zelle); e.target.textContent = 'Copied'; } catch (_) { e.target.textContent = data.pay_zelle; }
+    }
+  });
   document.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (sending) return;
