@@ -87,6 +87,7 @@
     left: sv('<path d="M15 6l-6 6 6 6"/>'),
     right: sv('<path d="M9 6l6 6-6 6"/>'),
     close: sv('<path d="M6 6l12 12M18 6L6 18"/>'),
+    camera: sv('<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>', 20),
     plus: sv('<path d="M12 5v14M5 12h14"/>', 24),
     copy: sv('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>', 14),
     ext: sv('<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>', 16),
@@ -277,6 +278,97 @@
     const avg = vals.reduce((t, n) => t + n, 0) / vals.length;
     return amt > avg * 1.3 && amt - avg >= 20 ? '↑ ' + Math.round((amt / avg - 1) * 100) + '% vs usual ' + money0(avg) : '';
   }
+  // Same bill, same month last year
+  function lastYear(b, period) { const p = getPay(b, addMonths(period, -12)); return p && p.amount != null ? Number(p.amount) : null; }
+  function yoyLabel(b, amt, period) {
+    const k = period || S.month; const ly = lastYear(b, k);
+    if (amt == null || ly == null || !ly || b.category === 'Mortgage' || b.amount_type === 'fixed') return '';
+    const d = Math.round((amt / ly - 1) * 100);
+    return (d === 0 ? 'Same as' : (d > 0 ? '↑ ' + d + '% vs ' : '↓ ' + Math.abs(d) + '% vs ')) + monthLabel(addMonths(k, -12), true) + ' ' + addMonths(k, -12).slice(0, 4) + ' (' + money0(ly) + ')';
+  }
+  // Heating degree days for the usage month (the month before the bill), this year vs last year, from Open-Meteo
+  S.hdd = {};
+  function hddKey(period) { return addMonths(period, -1); }
+  async function loadHdd(period) {
+    const h = S.household; if (!h || h.lat == null) return;
+    const months = [hddKey(period), addMonths(hddKey(period), -12)];
+    for (const m of months) {
+      if (S.hdd[m] !== undefined) continue;
+      S.hdd[m] = null;
+      const { y, m: mm } = parseMonth(m);
+      const end = new Date(y, mm, 0); const last = end > today() ? new Date(today().getTime() - 5 * 86400000) : end;
+      if (last < new Date(y, mm - 1, 1)) continue;
+      try {
+        const r = await fetch(`https://archive-api.open-meteo.com/v1/archive?latitude=${h.lat}&longitude=${h.lon}&start_date=${m}&end_date=${isoDate(last)}&daily=temperature_2m_mean&temperature_unit=fahrenheit&timezone=America%2FNew_York`);
+        const j = await r.json();
+        const t = (j.daily && j.daily.temperature_2m_mean) || [];
+        S.hdd[m] = { hdd: t.reduce((a, v) => a + (v == null ? 0 : Math.max(0, 65 - v)), 0), days: t.length };
+      } catch (_) { /* offline: skip */ }
+    }
+    renderSoon();
+  }
+  function yoyBlock(b, amt) {
+    if (b.category === 'Mortgage' || b.amount_type === 'fixed') return '';
+    const ly = lastYear(b, S.month);
+    const heat = b.category === 'Gas' || b.category === 'Electric';
+    if (heat) loadHdd(S.month);
+    const a = S.hdd[hddKey(S.month)], c = S.hdd[addMonths(hddKey(S.month), -12)];
+    let weather = '';
+    if (heat && a && c && a.days && c.days && c.hdd > 0) {
+      const ha = a.hdd * (30 / a.days), hc = c.hdd * (30 / c.days);
+      const wd = Math.round((ha / hc - 1) * 100);
+      weather = `<p class="small">${monthLabel(hddKey(S.month), true)} was <strong>${Math.abs(wd)}% ${wd >= 0 ? 'colder' : 'milder'}</strong> than last year (heating degree days ${Math.round(ha)} vs ${Math.round(hc)}).`;
+      if (ly && amt != null) {
+        const adj = (amt / ly) / (ha / hc);
+        const ad = Math.round((adj - 1) * 100);
+        weather += ` Adjusted for weather, this bill is <strong>${ad === 0 ? 'about the same' : Math.abs(ad) + '% ' + (ad > 0 ? 'higher' : 'lower')}</strong>${ad > 15 ? ', worth a look' : ''}.`;
+      }
+      weather += '</p>';
+    }
+    if (!ly && !weather) return heat ? '<p class="small muted">Year-over-year comparison appears once there’s a bill from the same month last year.</p>' : '';
+    return `<div class="stack" style="gap:4px;padding-top:8px;border-top:1px solid var(--line-2)"><span class="lab small">Compared with last year</span>
+      ${ly ? `<p class="small">${monthLabel(addMonths(S.month, -12))}: <strong class="num">${money(ly)}</strong>${amt != null ? ' · now ' + money(amt) + ' (' + yoyLabel(b, amt).split(' (')[0] + ')' : ''}</p>` : ''}${weather}</div>`;
+  }
+  function shrinkImage(file, max) {
+    return new Promise((resolve) => {
+      const img = new Image(); const url = URL.createObjectURL(file);
+      img.onload = () => { const k = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url); resolve(c.toDataURL('image/jpeg', 0.85).split(',')[1]); };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+      img.src = url;
+    });
+  }
+  function matchScanned(x) {
+    const acct = (x.account_number || '').replace(/\D/g, '');
+    const live = S.bills.filter((b) => b.active !== false);
+    if (acct.length >= 4) {
+      const hit = live.filter((b) => { const n = (b.account_number || '').replace(/\D/g, ''); return n && (n === acct || n.endsWith(acct.slice(-6)) || acct.endsWith(n.slice(-6))); });
+      if (hit.length === 1) return hit[0];
+    }
+    const prov = (x.provider || '').toLowerCase().split(/\s+/)[0];
+    if (prov && prov.length > 2) { const hit = live.filter((b) => b.name.toLowerCase().includes(prov)); if (hit.length === 1) return hit[0]; }
+    return null;
+  }
+  async function scanBill(file) {
+    if (!file) return;
+    if (!navigator.onLine) return toast('Connect to the internet to scan.');
+    toast('Reading the bill…');
+    const image = await shrinkImage(file, 1600);
+    if (!image) return toast('Couldn’t open that photo.');
+    const { data } = await sb.auth.getSession();
+    let x;
+    try {
+      const r = await fetch(CFG.SUPABASE_URL + '/functions/v1/scan-bill', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session.access_token, apikey: CFG.SUPABASE_ANON_KEY }, body: JSON.stringify({ image, type: 'image/jpeg' }) });
+      x = await r.json();
+      if (!r.ok) return toast(x.error || 'Couldn’t read the bill.');
+    } catch (_) { return toast('Couldn’t reach the bill reader.'); }
+    if (x.amount_due == null && !x.due_date && !x.account_number) return toast('Couldn’t read that bill. Try a flatter, brighter photo.');
+    const b = matchScanned(x);
+    S.scan = Object.assign({ file }, x, { billId: b ? b.id : null });
+    if (x.due_date) S.month = monthKey(fromIso(x.due_date));
+    S.tab = 'bills';
+    if (b) openSheet('bill', b.id); else openSheet('new-bill');
+    toast(b ? 'Matched ' + billTitle(b) + '. Check and save.' : 'New bill. Check the details and save.');
+  }
   function rentStatus(r, rp, period) {
     const due = rentDue(r, rp);
     const got = rp && rp.amount_received != null ? Number(rp.amount_received) : 0;
@@ -438,6 +530,7 @@
     return `${weatherBanner()}${setupBanner()}${monthNav()}
       ${hero('Bills still to pay', money(md.total - md.paid), pct, money(md.paid) + ' of ' + money(md.total) + ' paid', md.overdue ? md.overdue + ' overdue · ' + money(md.overdueAmt) : 'None overdue', md.overdue)}
       ${md.setup ? `<p class="notice">${md.setup} ${md.setup === 1 ? 'bill needs' : 'bills need'} an amount or due day for ${monthLabel(S.month, true)}. Fill them in on the card.</p>` : ''}
+      <label class="btn block scanbtn"><input type="file" accept="image/*" capture="environment" class="sr" data-change="scan-bill"> ${ICON.camera} Scan a paper bill</label>
       <div class="chips" role="group" aria-label="Show floor">${unitChips}</div>
       <div class="seg" role="group" aria-label="Filter bills">${filt}</div>
       ${visible.length ? `<ul class="bills">${visible.map(billCard).join('')}</ul>` :
@@ -457,6 +550,7 @@
           ${b.account_number ? `<button class="acct" data-act="copy" data-text="${esc(b.account_number)}" aria-label="Copy account number ${esc(b.account_number)}">${esc(b.category)} · #<span class="num">${esc(b.account_number)}</span> ${ICON.copy}</button>` : `<span class="small muted">${esc(b.category)}</span>`}
           <span class="pill ${r.st.k}">${esc(r.st.label)}</span>
           ${spikeLabel(b, r.amt) ? `<span class="pill late">${spikeLabel(b, r.amt)}</span>` : ''}
+          ${yoyLabel(b, r.amt) ? `<span class="small muted">${yoyLabel(b, r.amt)}</span>` : ''}
         </div>
       </div>
       ${editing ? `<div class="stack">
@@ -492,9 +586,34 @@
       ${soon.map((r) => { const d = dayDiff(fromIso(r.lease_end)); return `<p class="notice info">${esc(rentalTitle(r))}’s lease ${d < 0 ? 'ended' : 'ends'} ${fmtDate(fromIso(r.lease_end))}${d >= 0 ? ' (' + d + ' days)' : ''}. <button class="linkbtn" data-act="renew" data-id="${r.id}" style="min-height:0;padding:0">Renew</button> or <button class="linkbtn" data-act="moveout" data-id="${r.id}" style="min-height:0;padding:0">plan move-out</button></p>`; }).join('')}
       ${depDue.map((r) => { const by = new Date(fromIso(r.move_out_on).getTime() + 14 * 86400000); const d = dayDiff(by); return `<p class="notice${d <= 3 ? '' : ' info'}">Return ${esc(rentalTitle(r))}’s deposit${r.deposit ? ' (' + money(r.deposit) + ')' : ''} with an itemized list by <strong>${fmtDate(by)}</strong>${d >= 0 ? ' (' + d + ' days)' : ' (overdue)'}. <button class="linkbtn" data-act="moveout" data-id="${r.id}" style="min-height:0;padding:0">Record it</button></p>`; }).join('')}
       ${unmatchedCard()}
+      ${vacantCards()}
       ${md.rows.length ? `<ul class="bills">${md.rows.map(rentCard).join('')}</ul>` : '<p class="muted" style="text-align:center;padding:28px 0">No tenants yet. Tap + to add one.</p>'}
       ${mortgageCard()}`;
   }
+  const TURNOVER = ['Repairs from move-out inspection', 'Paint touch-ups', 'Deep clean', 'Change locks', 'Test smoke & CO detectors', 'Take listing photos', 'List the unit', 'Schedule showings', 'Screen applicants', 'Sign lease & collect deposit'];
+  function vacantUnits() { return S.units.filter((u) => isFloor(u.name) && !u.exclude_from_tax && !S.rentals.some((r) => r.active !== false && r.unit_id === u.id)); }
+  function vacantCards() {
+    return vacantUnits().map((u) => {
+      const prev = S.rentals.filter((r) => r.unit_id === u.id).sort((a, b) => (b.move_out_on || '').localeCompare(a.move_out_on || ''))[0];
+      const since = u.vacant_since || (prev && prev.move_out_on) || null;
+      const days = since ? Math.max(0, -dayDiff(fromIso(since))) : null;
+      const rent = prev && prev.rent_amount ? Number(prev.rent_amount) : null;
+      const lost = days != null && rent ? (rent * days) / 30 : null;
+      const list = (u.turnover && u.turnover.length ? u.turnover : TURNOVER.map((item) => ({ item, done: false })));
+      const done = list.filter((x) => x.done).length;
+      return `<section class="card" aria-label="${esc(u.name)} is vacant">
+        <div class="row between"><h2>${esc(u.name)} · vacant</h2><span class="pill setup" style="margin:0">${days != null ? days + (days === 1 ? ' day' : ' days') : 'Vacant'}</span></div>
+        ${lost != null ? `<p class="small">About <strong>${money0(lost)}</strong> in rent missed so far (at ${money0(rent)}/month).</p>` : ''}
+        <div class="row" style="gap:8px;align-items:flex-end"><div class="field" style="flex:1"><label for="vs-${u.id}">Vacant since</label><input class="input" id="vs-${u.id}" type="date" value="${esc(since || '')}" data-change="vacant-since" data-id="${u.id}"></div></div>
+        <div class="stack" style="gap:2px"><span class="lab small">Turnover checklist · ${done} of ${list.length}</span>
+          <div class="meter"><div style="width:${Math.round((done / list.length) * 100)}%"></div></div>
+          ${list.map((x, i) => `<label class="checkrow"><input type="checkbox" data-change="turnover" data-id="${u.id}" data-i="${i}" ${x.done ? 'checked' : ''}> ${esc(x.item)}</label>`).join('')}
+        </div>
+        <button class="btn primary-soft" data-act="new-rental-unit" data-unit="${u.id}">Add the new tenant</button>
+      </section>`;
+    }).join('');
+  }
+  function saveUnit(u) { const i = S.units.findIndex((x) => x.id === u.id); S.units[i] = u; queue({ kind: 'update', table: 'units', row: { turnover: u.turnover || null, vacant_since: u.vacant_since || null }, match: { id: u.id } }); }
   function rentCard(x) {
     const r = x.r, done = x.st.k === 'paid';
     const unit = unitName(r.unit_id);
@@ -729,6 +848,42 @@
     return { rentalPaid: sum(rent, true), homePaid: sum(home, true), homeTotal: sum(home, false), homeRows: home };
   }
   function upkeepSplit(period, home) { return S.logs.filter((l) => l.done_on && l.done_on.slice(0, 7) === period.slice(0, 7) && isHome(l.unit_id) === home).reduce((t, l) => t + (Number(l.cost) || 0), 0); }
+  function expectedBill(b, k, cur) {
+    if (b.active === false || b.escrow || !dueInMonth(b, k)) return { amt: 0, est: false };
+    const pay = getPay(b, k);
+    if (k === cur && pay && pay.paid_at) return { amt: 0, est: false };
+    let a = amountFor(b, pay);
+    if (a != null) return { amt: a, est: false };
+    const prev = []; for (let i = 1; i <= 12 && prev.length < 3; i++) { const p = getPay(b, addMonths(k, -i)); if (p && p.amount != null && Number(p.amount) > 0) prev.push(Number(p.amount)); }
+    if (b.default_amount != null) return { amt: Number(b.default_amount), est: true };
+    return prev.length ? { amt: prev.reduce((t, n) => t + n, 0) / prev.length, est: true } : { amt: 0, est: true };
+  }
+  function forecastCard() {
+    const cur = monthKey(new Date());
+    const months = [cur, addMonths(cur, 1), addMonths(cur, 2)];
+    const rows = months.map((k) => {
+      let rent = 0;
+      S.rentals.filter((r) => r.active !== false && !isHome(r.unit_id) && r.rent_amount != null).forEach((r) => {
+        const rp = getRentPay(r, k); const due = rentDue(r, rp) || 0; const got = rp && rp.amount_received != null ? Number(rp.amount_received) : 0;
+        rent += k === cur ? Math.max(0, due - got) : due;
+      });
+      let rental = 0, home = 0, est = false; const big = [];
+      S.bills.forEach((b) => { const e = expectedBill(b, k, cur); if (!e.amt) return; if (e.est) est = true; if (isHome(b.unit_id)) home += e.amt; else { rental += e.amt; if (e.amt >= 500) big.push(billTitle(b)); } });
+      return { k, rent, rental, home, net: rent - rental - home, est, big };
+    });
+    const tight = rows.filter((r) => r.net < 0);
+    return `<section class="card" aria-label="Cash-flow forecast">
+      <h2>Next 3 months</h2>
+      <p class="small muted">Money still expected in and out. Unknown amounts use the usual or recent average (marked ≈).</p>
+      <table class="tbl"><thead><tr><th scope="col"></th>${rows.map((r) => `<th scope="col">${monthLabel(r.k, true)}${r.k === cur ? ' (left)' : ''}</th>`).join('')}</tr></thead><tbody>
+        <tr><th scope="row">Rent in</th>${rows.map((r) => `<td class="num">${money0(r.rent)}</td>`).join('')}</tr>
+        <tr><th scope="row">Rental bills</th>${rows.map((r) => `<td class="num">${r.est ? '≈' : ''}${money0(r.rental)}</td>`).join('')}</tr>
+        <tr><th scope="row">Home bills</th>${rows.map((r) => `<td class="num">${money0(r.home)}</td>`).join('')}</tr>
+        <tr><th scope="row"><strong>Net</strong></th>${rows.map((r) => `<td class="num" style="color:${r.net < 0 ? 'var(--late-fg)' : 'var(--paid-fg)'}"><strong>${r.net < 0 ? '−' : ''}${money0(Math.abs(r.net))}</strong></td>`).join('')}</tr>
+      </tbody></table>
+      ${tight.map((r) => `<p class="notice">Tight month: <strong>${monthLabel(r.k)}</strong> looks ${money0(Math.abs(r.net))} short${r.big.length ? ' (' + esc(r.big.join(', ')) + ')' : ''}. Set money aside now.</p>`).join('')}
+    </section>`;
+  }
   function homeCard() {
     const names = homeNames();
     if (!names.length) return '';
@@ -794,6 +949,7 @@
           ${rows.slice().reverse().map((r) => `<tr><th scope="row">${monthLabel(r.k, true)}</th><td class="num">${money0(r.inc)}</td><td class="num">${money0(r.out)}</td><td class="num" style="color:${r.net < 0 ? 'var(--late-fg)' : 'inherit'}">${r.net < 0 ? '−' : ''}${money0(Math.abs(r.net))}</td></tr>`).join('')}
         </tbody></table>
       </section>
+      ${forecastCard()}
       ${homeCard()}
       <section class="card" aria-label="Bills by place">
         <h2>Bills by place · ${monthLabel(S.month, true)}</h2>
@@ -947,6 +1103,8 @@
         <form class="stack" data-form="house">
           <div class="field"><label for="h-name">Name</label><input class="input" id="h-name" name="name" value="${esc(S.household && S.household.name)}"></div>
           <div class="field"><label for="h-addr">Address</label><input class="input" id="h-addr" name="address" value="${esc(S.household && S.household.address)}"></div>
+          <div class="field"><label for="h-zelle">Zelle for rent <span class="muted">(shown on tenants’ pages)</span></label><input class="input" id="h-zelle" name="pay_zelle" value="${esc(S.household && S.household.pay_zelle)}" placeholder="Email or phone your tenants send Zelle to" autocomplete="off"></div>
+          <div class="field"><label for="h-paynote">Payment note for tenants</label><input class="input" id="h-paynote" name="pay_note" value="${esc(S.household && S.household.pay_note)}" placeholder="e.g. Put your floor and month in the memo"></div>
           <button class="btn" type="submit">Save house details</button>
         </form>
       </section>
@@ -965,7 +1123,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v1.9.1</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.0</p>`;
   }
 
   function importCard() {
@@ -1326,9 +1484,12 @@ function setup() {
     const b = isNew ? { unit_id: wholeId(), category: 'Other', amount_type: 'variable' } : S.bills.find((x) => x.id === sh.id);
     if (!b) return '';
     const pay = isNew ? {} : (getPay(b, S.month) || {});
-    const amt = isNew ? null : amountFor(b, pay);
+    const sc = S.scan && (isNew ? !S.scan.billId : S.scan.billId === b.id) ? S.scan : null;
+    if (sc && isNew) Object.assign(b, { name: sc.provider || '', category: CATEGORIES.includes(sc.category) ? sc.category : 'Other', account_number: sc.account_number || null, due_day: sc.due_date ? +sc.due_date.slice(8, 10) : null, default_amount: null });
+    const amt = sc && sc.amount_due != null ? sc.amount_due : (isNew ? null : amountFor(b, pay));
     const paidDate = pay.paid_at ? isoDate(new Date(pay.paid_at)) : '';
     const isMort = b.category === 'Mortgage';
+    const scanNote = sc ? `<p class="notice info">Read from your photo${sc.confidence && sc.confidence !== 'high' ? ' (' + esc(sc.confidence) + ' confidence)' : ''}: ${sc.amount_due != null ? money(sc.amount_due) : 'amount unclear'}${sc.due_date ? ', due ' + fmtDate(fromIso(sc.due_date)) : ''}${sc.service_period ? ', for ' + esc(sc.service_period) : ''}. Please check before saving. The photo will be attached.</p>` : '';
     const mortMonth = isNew || !isMort ? '' : `
         <p class="lab small" style="margin:4px 0 0">From your monthly statement <span class="muted">(optional, for taxes and equity)</span></p>
         <div class="grid2">${f('p-prin', 'Principal ($)', moneyInp('p-prin', 'p_principal', pay.principal))}${f('p-int', 'Interest ($)', moneyInp('p-int', 'p_interest', pay.interest))}</div>
@@ -1338,11 +1499,11 @@ function setup() {
         ${f('b-hval', 'Estimated home value ($)', moneyInp('b-hval', 'home_value', b.home_value))}
         <p class="small muted">The latest “Balance after” you enter replaces the loan balance. Home value is your own estimate, for equity.</p>
       </section>`;
-    const month = isNew ? '' : `<section class="card">
+    const month = isNew ? (sc ? scanNote + `<section class="card"><h2>${monthLabel(S.month)}</h2>${f('p-amt', 'Amount ($)', moneyInp('p-amt', 'p_amount', amt))}</section>` : '') : scanNote + `<section class="card">
         <h2>${monthLabel(S.month)}</h2>
         <div class="grid2">${f('p-amt', 'Amount ($)', moneyInp('p-amt', 'p_amount', amt))}${f('p-date', 'Paid on', inp('p-date', 'p_paid', paidDate, 'type="date"'))}</div>
         <div class="grid2">${f('p-method', 'Paid with', `<select class="input" id="p-method" name="p_method">${methodOpts(pay.method)}</select>`)}${f('p-conf', 'Confirmation #', inp('p-conf', 'p_confirmation', pay.confirmation))}</div>
-        ${f('p-note', 'Note', inp('p-note', 'p_note', pay.note))}${mortMonth}
+        ${f('p-note', 'Note', inp('p-note', 'p_note', pay.note))}${mortMonth}${isNew ? '' : yoyBlock(b, amt)}
         <div class="field"><span class="lab">Bill photo or receipt</span>
           ${pay.receipt_path ? `<div class="btns"><button type="button" class="btn" data-act="receipt-view">View</button><button type="button" class="btn danger" data-act="receipt-remove">Remove</button></div><div id="receipt-slot"></div>` :
             `<label class="btn" style="width:100%"><input type="file" accept="image/*,application/pdf" class="sr" data-change="receipt"> Add photo or PDF</label>`}
@@ -1368,7 +1529,7 @@ function setup() {
 
   function rentalSheet(sh) {
     const isNew = sh.type === 'new-rental';
-    const r = isNew ? { due_day: 1, grace_days: 5, unit_id: (S.units.find((u) => isFloor(u.name)) || {}).id } : S.rentals.find((x) => x.id === sh.id);
+    const r = isNew ? { due_day: 1, grace_days: 5, unit_id: sh.unit || (vacantUnits()[0] || S.units.find((u) => isFloor(u.name)) || {}).id } : S.rentals.find((x) => x.id === sh.id);
     if (!r) return '';
     const rp = isNew ? {} : (getRentPay(r, S.month) || {});
     const due = isNew ? null : rentDue(r, rp);
@@ -1519,7 +1680,8 @@ function setup() {
       case 'insp-del': S.inspDraft.items.splice(+el.dataset.i, 1); render(); break;
       case 'insp-add': { const n = document.getElementById('in-room'); const v = n && n.value.trim(); if (v) { S.inspDraft.items.push({ room: v, condition: 'Good', note: '', photos: [] }); render(); } break; }
       case 'doc-open': { const d = S.documents.find((x) => x.id === id); if (d && d.file_path) openFile(d.file_path); break; }
-      case 'sheet-close': case 'sheet-close-bg': S.sheet = null; render(); break;
+      case 'sheet-close': case 'sheet-close-bg': S.sheet = null; S.scan = null; render(); break;
+      case 'new-rental-unit': S.sheet = { type: 'new-rental', unit: el.dataset.unit }; S.sheetErr = ''; render(); break;
       case 'sheet-delete': {
         if (!S.deleteArm) { S.deleteArm = true; render(); break; }
         const t = S.sheet.type, sid = S.sheet.id;
@@ -1616,6 +1778,14 @@ function setup() {
     } else if (kind === 'insp-photo') {
       const i = +el.dataset.i; const file = el.files && el.files[0];
       if (file) uploadTo('inspections', file).then((path) => { if (path && S.inspDraft) { S.inspDraft.items[i].photos = (S.inspDraft.items[i].photos || []).concat(path); render(); toast('Photo added'); } });
+    } else if (kind === 'scan-bill') {
+      scanBill(el.files && el.files[0]); el.value = '';
+    } else if (kind === 'turnover') {
+      const u = Object.assign({}, S.units.find((x) => x.id === el.dataset.id));
+      const list = (u.turnover && u.turnover.length ? u.turnover : TURNOVER.map((item) => ({ item, done: false }))).map((x) => Object.assign({}, x));
+      list[+el.dataset.i].done = el.checked; u.turnover = list; saveUnit(u); render();
+    } else if (kind === 'vacant-since') {
+      const u = Object.assign({}, S.units.find((x) => x.id === el.dataset.id)); u.vacant_since = el.value || null; saveUnit(u); render();
     } else if (kind === 'guide-flag') {
       localFlag(el.dataset.flag, el.checked); render();
     }
@@ -1662,6 +1832,9 @@ function setup() {
         escrow: !!fd.get('escrow'), due_months: (() => { const ms = fd.getAll('due_m').map(Number).filter((n) => n >= 1 && n <= 12); return ms.length ? ms : null; })()
       });
       saveBill(nb);
+      const scanned = S.scan; S.scan = null;
+      if (isNew && scanned && num(val('p_amount')) != null) savePayment(nb, S.month, { amount: num(val('p_amount')) });
+      if (scanned && scanned.file) uploadTo('bills', scanned.file).then((path) => { if (path) { savePayment(nb, S.month, { receipt_path: path }); renderSoon(); } });
       if (!isNew) {
         const paidOn = val('p_paid'); const pay = getPay(nb, S.month);
         let paidAt = null;
@@ -1783,7 +1956,7 @@ function setup() {
       if (r.error) return toast('Couldn’t change it: ' + r.error.message);
       form.reset(); localFlag('pw-changed', true); render(); toast('Password changed. Share the new one with your family.');
     } else if (kind === 'house') {
-      const fields = { name: val('name') || 'My house', address: val('address') || null };
+      const fields = { name: val('name') || 'My house', address: val('address') || null, pay_zelle: val('pay_zelle') || null, pay_note: val('pay_note') || null };
       Object.assign(S.household, fields);
       queue({ kind: 'update', table: 'households', row: fields, match: { id: S.household.id } });
       render(); toast('House details saved');

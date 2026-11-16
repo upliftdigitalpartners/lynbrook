@@ -16,7 +16,7 @@ const json = (b: unknown, status = 200) => Response.json(b, { status, headers: c
 
 async function rentalFor(token: string | null) {
   if (!token || !/^[0-9a-f]{16,64}$/.test(token)) return null;
-  const { data } = await db.from('rentals').select('id,household_id,unit_id,tenant_name,rent_amount,due_day,grace_days,late_fee,lease_end,active,units(name),households(name,address)').eq('portal_token', token).eq('active', true).maybeSingle();
+  const { data } = await db.from('rentals').select('id,household_id,unit_id,tenant_name,rent_amount,due_day,grace_days,late_fee,lease_end,active,units(name),households(name,address,pay_zelle,pay_note)').eq('portal_token', token).eq('active', true).maybeSingle();
   return data;
 }
 
@@ -49,6 +49,7 @@ Deno.serve(async (req) => {
         tenant: r.tenant_name, unit: rr.units?.name ?? null, house: rr.households?.name ?? null, address: rr.households?.address ?? null,
         rent: r.rent_amount, due_day: r.due_day, grace_days: r.grace_days, late_fee: r.late_fee, lease_end: r.lease_end,
         payments: pays ?? [], requests: reqs ?? [],
+        pay_zelle: rr.households?.pay_zelle ?? null, pay_note: rr.households?.pay_note ?? null,
       });
     }
     if (req.method === 'POST') {

@@ -228,3 +228,8 @@ textarea.input { padding: 10px 12px; min-height: 80px; resize: vertical; }
 
 /* v1.9 weather */
 .notice.weather { background: var(--soon-bg); color: var(--soon-fg); line-height: 1.45; }
+
+/* v2.0 */
+.scanbtn { gap: 8px; height: 48px; border-style: dashed; color: var(--accent); }
+.tbl thead th { text-align: right; }
+.tbl thead th:first-child { text-align: left; }
