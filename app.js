@@ -603,6 +603,85 @@
     return n;
   }
   function streakDots(n) { return `<span class="sdots" aria-hidden="true">${Array.from({ length: 6 }, (_, i) => `<i class="${i >= 6 - Math.min(n, 6) ? 'on' : ''}" style="animation-delay:${i * 0.06}s"></i>`).join('')}</span>`; }
+  // ===== #7 Explain a bill =====
+  S.explain = {};
+  function explainContext(b, amt) {
+    const months = {};
+    for (let i = 13; i >= 1; i--) { const k = addMonths(S.month, -i); const p = getPay(b, k); if (p && p.amount != null) months[k.slice(0, 7)] = Number(p.amount); }
+    const a = S.hdd[hddKey(S.month)], c = S.hdd[addMonths(hddKey(S.month), -12)];
+    return {
+      bill: { name: b.name, category: b.category, place: unitName(b.unit_id), autopay: !!b.autopay },
+      this_month: { period: S.month.slice(0, 7), amount: amt },
+      same_month_last_year: lastYear(b, S.month), months,
+      hdd_usage_month: a && c && a.days && c.days ? { month: hddKey(S.month).slice(0, 7), this_year: Math.round(a.hdd * 30 / a.days), last_year: Math.round(c.hdd * 30 / c.days) } : null,
+      notes: (getPay(b, S.month) || {}).note || null
+    };
+  }
+  function explainBlock(b, amt) {
+    if (b.amount_type === 'fixed' || b.category === 'Mortgage' || amt == null) return '';
+    const key = b.id + '|' + S.month; const x = S.explain[key];
+    if (!x) return `<button type="button" class="btn askmini" data-act="explain" data-id="${b.id}"><span class="askicon" aria-hidden="true">✦</span> ${spikeLabel(b, amt) ? 'Why is this higher?' : 'Explain this bill'}</button>`;
+    if (x.busy) return '<div class="explain"><div class="msg assistant typing" aria-label="Thinking"><span></span><span></span><span></span></div></div>';
+    if (x.error) return `<p class="err">${esc(x.error)}</p>`;
+    return `<div class="explain" aria-live="polite"><strong>${esc(x.headline || '')}</strong>
+      ${(x.reasons || []).length ? `<span class="lab small">Likely why</span><ul>${x.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
+      ${(x.checks || []).length ? `<span class="lab small">Worth checking</span><ul>${x.checks.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
+      <span class="small muted">AI estimate from your history and the weather. It can be wrong.</span></div>`;
+  }
+  async function explainBill(id) {
+    const b = S.bills.find((x) => x.id === id); if (!b) return;
+    const pay = getPay(b, S.month); const amt = amountFor(b, pay);
+    if (b.category === 'Gas' || b.category === 'Electric') { await loadHdd(S.month); }
+    const key = b.id + '|' + S.month;
+    S.explain[key] = { busy: true }; renderSoon();
+    try { S.explain[key] = await assist({ mode: 'explain', context: explainContext(b, amt) }); }
+    catch (e) { S.explain[key] = { error: e.message }; }
+    renderSoon();
+  }
+
+  // ===== #9 Monthly recap =====
+  function recapKey(k) { return 'eh-recap-' + (S.household ? S.household.id : '') + '-' + k; }
+  function readRecap(k) { try { return JSON.parse(localStorage.getItem(recapKey(k)) || 'null'); } catch (_) { return null; } }
+  function recapContext(k) {
+    const rm = rentMonth(k), md = billMonth(k, true);
+    const avg = (b) => { const v = []; for (let i = 1; i <= 6; i++) { const p = getPay(b, addMonths(k, -i)); if (p && p.amount != null) v.push(Number(p.amount)); } return v.length ? Math.round(v.reduce((t, n) => t + n, 0) / v.length) : null; };
+    const rows = md.rows.filter((x) => !x.b.escrow);
+    const rental = rows.filter((x) => !isHome(x.b.unit_id)), home = rows.filter((x) => isHome(x.b.unit_id));
+    const bill = (x) => ({ name: billTitle(x.b) + ' · ' + unitName(x.b.unit_id), amount: x.amt, usual: x.b.amount_type === 'fixed' ? null : avg(x.b), last_year: lastYear(x.b, k), paid: !!(x.pay && x.pay.paid_at), due: x.due ? isoDate(x.due) : null });
+    const next = addMonths(k, 1);
+    const upkeep = S.logs.filter((l) => (l.done_on || '').slice(0, 7) === k.slice(0, 7)).map((l) => ({ title: l.title, cost: l.cost, vendor: l.vendor, place: unitName(l.unit_id) }));
+    const coming = S.tasks.filter((t) => t.active !== false && t.next_due && t.next_due.slice(0, 7) === next.slice(0, 7)).map((t) => t.title + ' ' + fmtDay(fromIso(t.next_due)));
+    S.rentals.filter((r) => r.active !== false && r.lease_end && r.lease_end.slice(0, 7) <= addMonths(k, 3).slice(0, 7) && r.lease_end >= k).forEach((r) => coming.push(rentalTitle(r) + ' lease ends ' + fmtDate(fromIso(r.lease_end))));
+    const rentIn = rm.received, rentalOut = rental.reduce((t, x) => t + ((x.pay && x.pay.paid_at) ? (x.amt || 0) : 0), 0) + upkeepSplit(k, false);
+    return {
+      month: monthLabel(k),
+      rent: rm.rows.map((x) => ({ tenant: rentalTitle(x.r), place: unitName(x.r.unit_id), due: x.due, received: x.got, status: x.st.label })),
+      bills: rental.map(bill), home_bills: home.map(bill), upkeep, coming_next_month: coming,
+      totals: { rent_in: Math.round(rentIn), rental_out: Math.round(rentalOut), net: Math.round(rentIn - rentalOut) }
+    };
+  }
+  function recapCard() {
+    const k = S.month; const r = S.recapBusy === k ? { busy: true } : readRecap(k);
+    const label = monthLabel(k).split(' ')[0];
+    if (!r) return `<section class="card recap" aria-label="${esc(label)} recap"><div class="row between"><h2>${esc(label)} recap</h2><span class="askicon" aria-hidden="true">✦</span></div>
+      <p class="small muted">A short plain-English summary of rent, bills, upkeep and what’s next.</p>
+      <button class="btn primary-soft" data-act="recap">Write my ${esc(label)} recap</button></section>`;
+    if (r.busy) return `<section class="card recap" aria-label="${esc(label)} recap"><h2>${esc(label)} recap</h2><div class="msg assistant typing" aria-label="Writing"><span></span><span></span><span></span></div></section>`;
+    if (r.error) return `<section class="card recap"><h2>${esc(label)} recap</h2><p class="err">${esc(r.error)}</p><button class="btn" data-act="recap">Try again</button></section>`;
+    return `<section class="card recap" aria-label="${esc(label)} recap">
+      <div class="row between"><h2>${esc(r.title || label + ' recap')}</h2><span class="askicon" aria-hidden="true">✦</span></div>
+      <ul class="recap-list">${(r.bullets || []).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+      ${r.net ? `<p class="recap-net">${esc(r.net)}</p>` : ''}
+      <div class="row between"><span class="small muted">Written ${r.at ? fmtDay(new Date(r.at)) : ''} · AI summary, check the numbers above</span><button class="linkbtn" data-act="recap">Refresh</button></div>
+    </section>`;
+  }
+  async function makeRecap() {
+    const k = S.month; S.recapBusy = k; render();
+    let out;
+    try { const j = await assist({ mode: 'recap', context: recapContext(k) }); out = { title: j.title, bullets: j.bullets, net: j.net, at: new Date().toISOString() }; try { localStorage.setItem(recapKey(k), JSON.stringify(out)); } catch (_) {} }
+    catch (e) { out = { error: e.message }; try { localStorage.removeItem(recapKey(k)); } catch (_) {} toast(e.message); }
+    S.recapBusy = null; render();
+  }
   function rentStatus(r, rp, period) {
     const due = rentDue(r, rp);
     const got = rp && rp.amount_received != null ? Number(rp.amount_received) : 0;
@@ -886,7 +965,7 @@
           <div class="row wrap" style="gap:6px"><span class="bill-name">${esc(billTitle(b))}</span><span class="tag">${esc(unit)}</span></div>
           ${b.account_number ? `<button class="acct" data-act="copy" data-text="${esc(b.account_number)}" aria-label="Copy account number ${esc(b.account_number)}">${esc(b.category)} · #<span class="num">${esc(b.account_number)}</span> ${ICON.copy}</button>` : `<span class="small muted">${esc(b.category)}</span>`}
           <span class="pill ${r.st.k}">${esc(r.st.label)}</span>
-          ${spikeLabel(b, r.amt) ? `<span class="pill late">${spikeLabel(b, r.amt)}</span>` : ''}
+          ${spikeLabel(b, r.amt) ? `<span class="row" style="gap:6px;flex-wrap:wrap"><span class="pill late" style="margin:0">${spikeLabel(b, r.amt)}</span><button class="linkbtn small" data-act="explain" data-id="${b.id}" style="min-height:32px;padding:0">Why?</button></span>` : ''}
           ${yoyLabel(b, r.amt) ? `<span class="small muted">${yoyLabel(b, r.amt)}</span>` : ''}
         </div>
       </div>
@@ -1370,6 +1449,7 @@
           ${rows.slice().reverse().map((r) => `<tr><th scope="row">${monthLabel(r.k, true)}</th><td class="num">${money0(r.inc)}</td><td class="num">${money0(r.out)}</td><td class="num" style="color:${r.net < 0 ? 'var(--late-fg)' : 'inherit'}">${r.net < 0 ? '−' : ''}${money0(Math.abs(r.net))}</td></tr>`).join('')}
         </tbody></table>
       </section>
+      ${recapCard()}
       <button class="askcard" data-act="ask-open"><span class="askicon" aria-hidden="true">✦</span><span class="stack" style="gap:2px;text-align:left"><strong>Ask about your house</strong><span class="small muted">“What did I spend on repairs this year?”</span></span><span aria-hidden="true">›</span></button>
       ${forecastCard()}
       ${homeCard()}
@@ -1551,7 +1631,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.4</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.5</p>`;
   }
 
   function importCard() {
@@ -1945,7 +2025,7 @@ function setup() {
         <h2>${monthLabel(S.month)}</h2>
         <div class="grid2">${f('p-amt', 'Amount ($)', moneyInp('p-amt', 'p_amount', amt))}${f('p-date', 'Paid on', inp('p-date', 'p_paid', paidDate, 'type="date"'))}</div>
         <div class="grid2">${f('p-method', 'Paid with', `<select class="input" id="p-method" name="p_method">${methodOpts(pay.method)}</select>`)}${f('p-conf', 'Confirmation #', inp('p-conf', 'p_confirmation', pay.confirmation))}</div>
-        ${f('p-note', 'Note', inp('p-note', 'p_note', pay.note))}${mortMonth}${isNew ? '' : yoyBlock(b, amt)}
+        ${f('p-note', 'Note', inp('p-note', 'p_note', pay.note))}${mortMonth}${isNew ? '' : yoyBlock(b, amt)}${isNew ? '' : explainBlock(b, amt)}
         <div class="field"><span class="lab">Bill photo or receipt</span>
           ${pay.receipt_path ? `<div class="btns"><button type="button" class="btn" data-act="receipt-view">View</button><button type="button" class="btn danger" data-act="receipt-remove">Remove</button></div><div id="receipt-slot"></div>` :
             `<label class="btn" style="width:100%"><input type="file" accept="image/*,application/pdf" class="sr" data-change="receipt"> Add photo or PDF</label>`}
@@ -2137,6 +2217,8 @@ function setup() {
         rec.onerror = () => { S.listening = false; render(); toast('Couldn’t hear that. Try typing.'); };
         rec.start(); break;
       }
+      case 'explain': { if (!S.sheet || S.sheet.id !== id) openSheet('bill', id); explainBill(id); break; }
+      case 'recap': makeRecap(); break;
       case 'ask-open': S.sheet = { type: 'ask' }; FX.sheetEnter = true; render(); setTimeout(() => { const n = document.getElementById('ask-q'); if (n) n.focus(); }, 300); break;
       case 'ask-suggest': askQuestion(el.dataset.q); break;
       case 'payoff-open': S.sheet = { type: 'payoff' }; FX.sheetEnter = true; render(); break;
