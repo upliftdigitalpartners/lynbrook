@@ -437,34 +437,6 @@
     return out;
   }
   const ASK_SUGGEST = ['How much did gas cost last winter?', 'Which tenant paid late most often?', 'What did I spend on repairs this year?', 'When was the boiler last serviced?', 'What’s coming due in the next 2 weeks?'];
-  function askSheet() {
-    const log = S.askLog || [];
-    return `<div class="sheet-bg" data-act="sheet-close-bg"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
-      <div class="grabber" aria-hidden="true"></div>
-      <div class="sheet-head"><h2 id="sheet-title" class="display">Ask about your house</h2><button class="iconbtn" data-act="sheet-close" aria-label="Close">${ICON.close}</button></div>
-      <div class="chat" aria-live="polite">
-        ${log.length ? log.map((m) => `<div class="msg ${m.role}">${m.role === 'assistant' ? esc(m.content).replace(/\n/g, '<br>') : esc(m.content)}</div>`).join('') : `<p class="small muted">Answers come from your own records in this app (bills, rent, repairs, upkeep, mortgage). Account numbers, phone numbers and emails aren’t sent.</p>
-          <div class="btns">${ASK_SUGGEST.map((q) => `<button type="button" class="chip" data-act="ask-suggest" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>`}
-        ${S.askBusy ? '<div class="msg assistant typing" aria-label="Thinking"><span></span><span></span><span></span></div>' : ''}
-      </div>
-      <form class="row" data-form="ask" style="gap:6px;position:sticky;bottom:0;background:var(--bg);padding-top:8px">
-        <label for="ask-q" class="sr">Your question</label>
-        <input class="input" id="ask-q" name="q" placeholder="Ask anything about your house" autocomplete="off" enterkeyhint="send" style="flex:1">
-        <button class="btn primary-soft" type="submit" ${S.askBusy ? 'disabled' : ''}>Ask</button>
-      </form>
-      <p class="small muted">AI can make mistakes. Check important numbers in the app.</p>
-    </div></div>`;
-  }
-  async function askQuestion(q) {
-    S.askLog = (S.askLog || []).concat({ role: 'user', content: q }); S.askBusy = true; render();
-    try {
-      const j = await assist({ mode: 'ask', question: q, history: S.askLog.slice(0, -1), context: askContext() });
-      S.askLog = S.askLog.concat({ role: 'assistant', content: j.answer || 'No answer.' });
-    } catch (e) { S.askLog = S.askLog.concat({ role: 'assistant', content: 'Sorry, ' + e.message }); }
-    S.askBusy = false; render();
-    const c = document.querySelector('.sheet'); if (c) c.scrollTop = c.scrollHeight;
-  }
-
   // ===== #3 Snap a receipt =====
   async function scanReceipt(file) {
     if (!file) return;
@@ -864,11 +836,12 @@
     return `<div class="shell">
       <header class="topbar">
         <div class="topbar-row"><span class="eyebrow">${esc(addr)}</span>${offline}</div>
-        <div class="topbar-row"><h1 class="display">${esc(titles[S.tab])}</h1>${add ? `<button class="addbtn" data-act="${add[0]}" aria-label="${add[1]}">${ICON.plus}<span>Add</span></button>` : ''}</div>
+        <div class="topbar-row"><h1 class="display">${esc(titles[S.tab])}</h1><span class="topbar-actions">${S.tab !== 'settings' ? '<button class="askbtn" data-act="ask-open" aria-label="Talk to your house" title="Talk to your house">✦</button>' : ''}${add ? `<button class="addbtn" data-act="${add[0]}" aria-label="${add[1]}">${ICON.plus}<span>Add</span></button>` : ''}</span></div>
       </header>
       <main class="main">${body}</main>
       <nav class="tabbar" aria-label="App sections"><div class="tabbar-inner">${tabs}</div></nav>
       ${S.sheet ? sheetView() : ''}
+      ${S.story ? storyView() : ''}
     </div>`;
   }
 
@@ -1001,9 +974,15 @@
         + (later.length ? `<h2 class="section-h">Coming up <span class="count">${later.length}</span></h2>${list(later)}` : '')
         + (!attention.length && !later.length ? emptyState('done', 'All caught up', 'Every ' + monthLabel(S.month).split(' ')[0] + ' bill is paid. Enjoy the quiet.') : '')
         + (paid.length ? `<details class="paidfold" data-fold="b-paid" ${isOpen('b-paid', false) ? 'open' : ''}><summary><span>Paid <span class="count">${paid.length}</span></span><span class="num muted">${money(paidSum)}</span><span class="chev" aria-hidden="true"></span></summary><ul class="prows">${paid.map(paidRow).join('')}</ul></details>` : '');
-    return `${weatherBanner()}${setupBanner()}${monthNav()}
+    if (S.billsView === 'cal') return `${weatherBanner()}${setupBanner()}${storyBar()}${monthNav()}
       ${billsHero(md, pct)}
       ${quickCard()}
+      ${billsViewSwitch()}
+      ${calendarView()}`;
+    return `${weatherBanner()}${setupBanner()}${storyBar()}${monthNav()}
+      ${billsHero(md, pct)}
+      ${quickCard()}
+      ${billsViewSwitch()}
       ${timeline(md)}
       <div class="chips" role="group" aria-label="Show place">${unitChips}</div>
       ${body}`;
@@ -1040,6 +1019,284 @@
           </div>
         </div>`}
     </li>`;
+  }
+
+  // ===== v2.7 · Calendar (C), Talk to your house (E), Weekly story (G), Money flow (H), Bill detail (Polished 2) =====
+  const CALC = { paid: 'var(--accent)', late: 'var(--late-fg)', soon: 'var(--soon-fg)', up: '#7F96C4', auto: '#7F96C4', setup: '#B9C1BB', rent: '#C9A15A', task: '#8A6FB0' };
+  S.billsView = (() => { try { return localStorage.getItem('eh-bview') || 'list'; } catch (_) { return 'list'; } })();
+  function calEvents(period) {
+    const { y, m } = parseMonth(period); const days = daysIn(y, m); const ev = {};
+    const add = (d, e) => { (ev[d] = ev[d] || []).push(e); };
+    billMonth(period, true).rows.forEach((r) => {
+      if (!r.due) return;
+      add(r.due.getDate(), { kind: 'bill', id: r.b.id, k: r.pay && r.pay.paid_at ? 'paid' : r.st.k, name: billTitle(r.b), sub: unitName(r.b.unit_id) + ' · ' + r.st.label, amt: r.amt });
+    });
+    rentMonth(period).rows.forEach((x) => {
+      if (isHome(x.r.unit_id) || x.due == null) return;
+      add(Math.min(x.r.due_day || 1, days), { kind: 'rent', id: x.r.id, k: x.st.k === 'paid' ? 'paid' : x.st.k === 'late' ? 'late' : 'rent', name: 'Rent · ' + rentalTitle(x.r), sub: unitName(x.r.unit_id) + ' · ' + x.st.label, amt: x.due });
+    });
+    S.tasks.filter((t) => t.active !== false && t.next_due && t.next_due.slice(0, 7) === period.slice(0, 7)).forEach((t) => {
+      const st = taskStatus(t);
+      add(+t.next_due.slice(8, 10), { kind: 'task', id: t.id, k: st.k === 'late' ? 'late' : 'task', name: t.title, sub: 'Upkeep · ' + st.label, amt: null });
+    });
+    return ev;
+  }
+  function calendarView() {
+    const k = S.month; const { y, m } = parseMonth(k); const days = daysIn(y, m);
+    const first = new Date(y, m - 1, 1).getDay();
+    const ev = calEvents(k);
+    const isCur = k === monthKey(new Date()); const td = today().getDate();
+    const sel = S.calDay && S.calDay.k === k ? S.calDay.d : (isCur ? td : (Object.keys(ev).map(Number).sort((a, b) => a - b)[0] || 1));
+    const cells = [];
+    for (let i = 0; i < first; i++) cells.push('<span class="cal-cell blank" aria-hidden="true"></span>');
+    for (let d = 1; d <= days; d++) {
+      const list = ev[d] || [];
+      const dots = list.slice(0, 3).map((e) => `<i style="background:${CALC[e.k] || CALC.up}"></i>`).join('');
+      const label = new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) + (list.length ? ', ' + list.length + (list.length === 1 ? ' item' : ' items') : '');
+      cells.push(`<button type="button" class="cal-cell${d === sel ? ' sel' : ''}${isCur && d === td ? ' today' : ''}" data-act="cal-day" data-d="${d}" aria-pressed="${d === sel}" aria-label="${esc(label)}" style="animation-delay:${(d * 0.012).toFixed(3)}s"><span>${d}</span><span class="cal-dots">${dots}</span></button>`);
+    }
+    const items = ev[sel] || [];
+    const dow = new Date(y, m - 1, sel).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+    const row = (e) => `<li><button type="button" class="cal-item" data-act="cal-open" data-kind="${e.kind}" data-id="${e.id}"><i style="background:${CALC[e.k] || CALC.up}"></i><span class="stack" style="gap:1px;min-width:0;flex:1"><strong>${esc(e.name)}</strong><span class="small muted">${esc(e.sub)}</span></span>${e.amt != null ? `<span class="num">${money(e.amt)}</span>` : ''}<span aria-hidden="true" class="muted">›</span></button></li>`;
+    const leg = [['paid', 'Paid'], ['up', 'Due'], ['late', 'Late'], ['rent', 'Rent'], ['task', 'Upkeep'], ['setup', 'No amount']].map(([c, l]) => `<span><i style="background:${CALC[c]}"></i>${l}</span>`).join('');
+    return `<section class="card cal" aria-label="Calendar for ${esc(monthLabel(k))}">
+      <div class="cal-head" aria-hidden="true">${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((x) => `<span>${x}</span>`).join('')}</div>
+      <div class="cal-grid">${cells.join('')}</div>
+      <div class="cal-legend small">${leg}</div>
+    </section>
+    <section class="card cal-dayc" aria-live="polite">
+      <h2>${esc(dow)}${isCur && sel === td ? ' · today' : ''}</h2>
+      ${items.length ? `<ul class="cal-list">${items.map(row).join('')}</ul>` : '<p class="small muted" style="margin:0">Nothing due this day.</p>'}
+    </section>`;
+  }
+  function billsViewSwitch() {
+    return `<div class="seg viewseg" role="group" aria-label="Bills view">${[['list', 'List'], ['cal', 'Calendar']].map(([v, l]) => `<button type="button" data-act="bills-view" data-v="${v}" aria-pressed="${S.billsView === v}">${l}</button>`).join('')}</div>`;
+  }
+
+  // ----- E · Talk to your house -----
+  function askGreeting() {
+    const k = monthKey(new Date());
+    const md = billMonth(k, true); const rm = rentMonth(k);
+    const open = md.rows.filter((r) => !(r.pay && r.pay.paid_at));
+    const late = open.filter((r) => r.st.k === 'late');
+    const soon = open.filter((r) => r.st.k === 'soon');
+    const lateRent = rm.rows.filter((x) => x.st.k === 'late' && !isHome(x.r.unit_id));
+    const h = new Date().getHours(); const hi = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+    const bits = late.map((r) => billTitle(r.b) + ' is overdue').concat(lateRent.map((x) => rentalTitle(x.r) + '’s rent is late'));
+    if (!bits.length && soon.length) bits.push(soon.length + (soon.length === 1 ? ' bill is' : ' bills are') + ' due in the next few days');
+    return hi + '! ' + (bits.length ? (bits.length === 1 ? 'One thing: ' : bits.length + ' things: ') + bits.slice(0, 3).join(', ') + '.' : 'Nothing needs you right now.') + ' Ask me anything, or tell me what you paid.';
+  }
+  const HOUSE_AVATAR = '<svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><rect width="44" height="44" rx="14" fill="var(--accent)"/><path d="M10 22 22 12 34 22v11H10z" fill="var(--bg)"/><rect x="29" y="11" width="4" height="7" fill="var(--stamp)"/><rect x="19" y="25" width="6" height="8" fill="var(--accent)"/></svg>';
+  function looksLikeAction(q) {
+    const t = q.trim();
+    if (/\?\s*$/.test(t) || /^(what|how|when|why|which|who|where|did|do|does|is|was|are|can|could|should|will|show|list|tell|explain|compare)\b/i.test(t)) return false;
+    return /\b(paid|pay|received|got|deposited|done|did|fixed|replaced|serviced|cleaned|installed|repaired|came in|bill (is|was)|zelle)\b/i.test(t);
+  }
+  function askSheet() {
+    const log = S.askLog || [];
+    const used = new Set(log.filter((m) => m.role === 'user').map((m) => m.content));
+    const chips = ASK_SUGGEST.filter((q) => !used.has(q)).slice(0, 4);
+    const addr = S.household && S.household.address ? S.household.address.split(',')[0] : 'Your house';
+    const msg = (m, i) => {
+      if (m.role === 'user') return `<div class="msg user">${esc(m.content)}</div>`;
+      let card = '';
+      if (m.actions && m.actions.length) {
+        const acts = m.actions.map(describeAction); const ok = acts.filter((x) => x.ok).length;
+        card = `<div class="actcard${m.applied ? ' done' : ''}"><ul class="quick-list">${acts.map((x) => `<li class="${x.ok ? '' : 'bad'}">${x.text}</li>`).join('')}</ul>
+          ${m.applied ? `<span class="small actdone">${m.applied === 'no' ? 'Not saved' : 'Saved ✓'}</span>` : `<div class="btns">${ok ? `<button type="button" class="btn primary-soft" data-act="ask-apply" data-i="${i}" style="flex:1">Save ${ok === 1 ? 'it' : 'all ' + ok}</button>` : ''}<button type="button" class="btn" data-act="ask-skip" data-i="${i}" style="flex:1">${ok ? 'Cancel' : 'OK'}</button></div>`}</div>`;
+      }
+      return `<div class="msg assistant">${fmtAnswer(m.content)}</div>${card}`;
+    };
+    const mic = ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) ? `<button type="button" class="iconbtn micbtn${S.listening ? ' on' : ''}" data-act="mic" data-target="ask-q" aria-label="${S.listening ? 'Stop listening' : 'Speak instead of typing'}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>` : '';
+    return `<div class="sheet-bg" data-act="sheet-close-bg"><div class="sheet talk" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <div class="grabber" aria-hidden="true"></div>
+      <div class="sheet-head talk-head"><span class="row" style="gap:12px;min-width:0">${HOUSE_AVATAR}<span class="stack" style="gap:0;min-width:0"><h2 id="sheet-title" class="display">${esc(addr)}</h2><span class="small talk-sub"><i class="live" aria-hidden="true"></i>Knows your bills, rent and upkeep</span></span></span><button class="iconbtn" data-act="sheet-close" aria-label="Close">${ICON.close}</button></div>
+      <div class="chat" aria-live="polite">
+        <div class="msg assistant">${esc(askGreeting())}</div>
+        ${log.map(msg).join('')}
+        ${S.askBusy ? '<div class="msg assistant typing" aria-label="Thinking"><span></span><span></span><span></span></div>' : ''}
+      </div>
+      ${chips.length && !S.askBusy ? `<div class="talk-chips">${chips.map((q) => `<button type="button" class="chip" data-act="ask-suggest" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>` : ''}
+      <form class="row talk-form" data-form="ask">
+        <label for="ask-q" class="sr">Ask or tell your house</label>
+        <input class="input" id="ask-q" name="q" placeholder="“Paid PSEG $96” or ask anything" autocomplete="off" enterkeyhint="send" style="flex:1;min-width:0">
+        ${mic}<button class="btn primary-soft" type="submit" ${S.askBusy ? 'disabled' : ''}>Send</button>
+      </form>
+      <p class="small muted">AI can make mistakes. You approve every change. Account numbers, phones and emails aren’t sent.</p>
+    </div></div>`;
+  }
+  // Answers are plain text, but tidy up any markdown the model slips in (bold, bullets, tables)
+  function fmtAnswer(t) {
+    return String(t || '').split('\n').filter((l) => !/^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(l))
+      .map((l) => /^\s*\|/.test(l) ? l.replace(/^\s*\||\|\s*$/g, '').split('|').map((c) => c.trim()).filter(Boolean).join(' · ') : l.replace(/^\s*[-*]\s+/, '• ').replace(/^#+\s*/, ''))
+      .map((l) => esc(l).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')).join('<br>');
+  }
+  function scrollChat() { const c = document.querySelector('.sheet'); if (c) c.scrollTop = c.scrollHeight; }
+  async function askQuestion(q) {
+    S.askLog = (S.askLog || []).concat({ role: 'user', content: q }); S.askBusy = true; render(); scrollChat();
+    try {
+      if (looksLikeAction(q)) {
+        const j = await assist({ mode: 'parse', text: q, context: quickContext() });
+        const acts = j.actions || [];
+        S.askLog = S.askLog.concat(acts.length ? { role: 'assistant', content: 'Here’s what I’ll save. Check it, then tap Save.', actions: acts } : { role: 'assistant', content: j.note || 'I couldn’t match that to a bill, tenant or task. Try naming the floor, like “paid PSEG 2nd floor $96”.' });
+      } else {
+        const history = S.askLog.slice(0, -1).map((m) => ({ role: m.role, content: m.content }));
+        const j = await assist({ mode: 'ask', question: q, history, context: askContext() });
+        S.askLog = S.askLog.concat({ role: 'assistant', content: j.answer || 'No answer.' });
+      }
+    } catch (e) { S.askLog = S.askLog.concat({ role: 'assistant', content: 'Sorry, ' + e.message }); }
+    S.askBusy = false; render(); scrollChat();
+  }
+
+  // ----- G · Weekly story -----
+  function weekStart() { const d = today(); return isoDate(new Date(d.getTime() - ((d.getDay() + 6) % 7) * 86400000)); }
+  function storySeen() { try { return localStorage.getItem('eh-story') === weekStart(); } catch (_) { return false; } }
+  function storySlides() {
+    const now = today(); const wk = new Date(now.getTime() - 7 * 86400000);
+    const cur = monthKey(new Date());
+    const md = billMonth(cur, true);
+    const paidWeek = Object.values(S.payments).filter((p) => p.paid_at && new Date(p.paid_at) >= wk)
+      .map((p) => ({ p, b: S.bills.find((x) => x.id === p.bill_id) })).filter((x) => x.b && !x.b.escrow);
+    const sum = paidWeek.reduce((t, x) => t + (amountFor(x.b, x.p) || 0), 0);
+    const late = md.rows.filter((r) => !(r.pay && r.pay.paid_at) && r.st.k === 'late');
+    const slides = [];
+    slides.push(paidWeek.length
+      ? { tone: 'green', kicker: 'This week', big: paidWeek.length + (paidWeek.length === 1 ? ' bill' : ' bills') + ' paid · ' + money0(sum), body: (late.length ? late.length + ' still overdue: ' + late.map((r) => billTitle(r.b)).join(', ') + '.' : 'Nothing overdue. No late fees.') + ' Paid: ' + paidWeek.slice(0, 4).map((x) => billTitle(x.b)).join(', ') + (paidWeek.length > 4 ? ' and more' : '') + '.', cta: ['See bills', 'go-bills'] }
+      : { tone: 'green', kicker: 'This week', big: late.length ? late.length + ' bill' + (late.length === 1 ? ' is' : 's are') + ' overdue' : 'A quiet week', body: late.length ? late.map((r) => billTitle(r.b) + (r.amt != null ? ' (' + money0(r.amt) + ')' : '')).join(', ') + '. Pay to keep your streak.' : 'No bills were paid or due in the last 7 days.', cta: ['See bills', 'go-bills'] });
+    const rm = rentMonth(cur); const rr = rm.rows.filter((x) => !isHome(x.r.unit_id) && x.due != null);
+    if (rr.length) {
+      const got = rr.reduce((t, x) => t + x.got, 0), due = rr.reduce((t, x) => t + (x.due || 0), 0);
+      const lateR = rr.filter((x) => x.st.k === 'late');
+      slides.push({ tone: 'gold', kicker: monthLabel(cur).split(' ')[0] + ' rent', big: money0(got) + ' in' + (due > got ? ' · ' + money0(due - got) + ' to go' : ''), body: rr.map((x) => rentalTitle(x.r) + ': ' + x.st.label.toLowerCase()).join('\n'), list: true, meter: due ? Math.min(1, got / due) : 0, cta: lateR.length ? ['Open Rent', 'go-rent'] : null });
+    }
+    let best = null;
+    md.rows.forEach((r) => { if (r.amt == null || r.b.amount_type === 'fixed' || r.b.category === 'Mortgage') return; const ly = lastYear(r.b, cur); if (!ly) return; const d = r.amt - ly; if (!best || Math.abs(d) > Math.abs(best.d)) best = { r, ly, d }; });
+    if (best) {
+      const pct = Math.round((best.d / best.ly) * 100);
+      const a = S.hdd[hddKey(cur)], c = S.hdd[addMonths(hddKey(cur), -12)];
+      const wx = a && c && a.days && c.days ? (a.hdd / a.days > (c.hdd / c.days) * 1.05 ? ' It was colder than last year.' : a.hdd / a.days < (c.hdd / c.days) * 0.95 ? ' It was milder than last year.' : '') : '';
+      const ly = addMonths(cur, -12);
+      slides.push({ tone: 'blue', kicker: 'Biggest change', big: billTitle(best.r.b) + (pct === 0 ? ' same as last year' : (pct > 0 ? ' up ' : ' down ') + Math.abs(pct) + '%'), body: money0(best.r.amt) + ' this month vs ' + money0(best.ly) + ' a year ago.' + wx, bars: [[monthLabel(ly, true) + ' ’' + ly.slice(2, 4), best.ly], [monthLabel(cur, true) + ' ’' + cur.slice(2, 4), best.r.amt]], cta: ['Why?', 'explain:' + best.r.b.id] });
+    }
+    const soon = [];
+    md.rows.forEach((r) => { if ((r.pay && r.pay.paid_at) || !r.due) return; const d = dayDiff(r.due); if (d >= 0 && d <= 14) soon.push({ d, t: billTitle(r.b) + (r.amt != null ? ' · ' + money0(r.amt) : '') + ' · ' + fmtDay(r.due) }); });
+    S.tasks.filter((t) => t.active !== false && t.next_due).forEach((t) => { const d = dayDiff(fromIso(t.next_due)); if (d >= -60 && d <= 14) soon.push({ d, t: t.title + ' · ' + (d < 0 ? 'overdue' : fmtDay(fromIso(t.next_due))) }); });
+    soon.sort((p, q) => p.d - q.d);
+    slides.push({ tone: 'rust', kicker: 'Coming up', big: soon.length ? soon.length + (soon.length === 1 ? ' thing' : ' things') + ' in the next 2 weeks' : 'Nothing due soon', body: soon.length ? soon.slice(0, 5).map((x) => x.t).join('\n') : 'Enjoy the quiet.', list: !!soon.length, cta: soon.length ? ['Open calendar', 'go-cal'] : null });
+    const n = billsStreak();
+    slides.push({ tone: 'dark', kicker: 'Your streak', big: n >= 1 ? '🔥 ' + n + (n === 1 ? ' month' : ' months') + ' on time' : 'Start a streak', body: n >= 1 ? 'Every bill paid by its due date' + (n > 1 ? ', ' + n + ' months running.' : '.') + ' Keep it going.' : 'Pay every bill by its due date this month to start one.', cta: ['Done', 'close'] });
+    return slides;
+  }
+  function storyView() {
+    const sl = S.story.slides; const i = S.story.i; const s = sl[i];
+    const ws = fromIso(weekStart());
+    const bars = sl.map((x, k) => `<span class="sbar"><i class="${k < i ? 'done' : k === i ? 'on' : ''}"></i></span>`).join('');
+    const max = s.bars ? Math.max(...s.bars.map((b) => b[1]), 1) : 1;
+    const chart = s.bars ? `<div class="s-chart r3">${s.bars.map((b, k) => `<div class="s-col"><span class="s-val">${money0(b[1])}</span><i style="height:${Math.round((b[1] / max) * 130)}px;animation-delay:${0.5 + k * 0.15}s;opacity:${k ? 1 : 0.5}"></i><span>${esc(b[0])}</span></div>`).join('')}</div>` : '';
+    const meter = s.meter != null ? `<div class="s-meter r3"><i style="width:${Math.round(s.meter * 100)}%"></i></div>` : '';
+    const body = s.list ? `<ul class="s-list r3">${s.body.split('\n').map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : `<p class="s-body r3">${esc(s.body)}</p>`;
+    return `<div class="story tone-${s.tone}" role="dialog" aria-modal="true" aria-label="Your week">
+      <div class="story-bars" aria-hidden="true">${bars}</div>
+      <div class="story-top"><span>Your week · ${fmtDay(ws)}–${fmtDay(new Date(ws.getTime() + 6 * 86400000))}</span><button type="button" class="iconbtn story-x" data-act="story-close" aria-label="Close">${ICON.close}</button></div>
+      <div class="story-main" data-slide="${i}">
+        <span class="s-kicker r1">${esc(s.kicker)}</span>
+        <h2 class="display s-big r2">${esc(s.big)}</h2>
+        ${meter}${body}${chart}
+      </div>
+      <button type="button" class="story-tap prev" data-act="story-prev" aria-label="Previous slide"></button>
+      <button type="button" class="story-tap next" data-act="story-next" aria-label="Next slide"></button>
+      <div class="story-foot"><span class="small">${i + 1} of ${sl.length}</span>${s.cta ? `<button type="button" class="btn story-cta" data-act="story-cta" data-go="${esc(s.cta[1])}">${esc(s.cta[0])}</button>` : `<button type="button" class="btn story-cta" data-act="story-next">Next</button>`}</div>
+    </div>`;
+  }
+  function storyBar() {
+    if (S.month !== monthKey(new Date())) return '';
+    const seen = storySeen();
+    return `<button type="button" class="storybar" data-act="story-open"><span class="sring${seen ? ' seen' : ''}">${HOUSE_AVATAR}</span><span class="stack" style="gap:1px;text-align:left;flex:1"><strong>Your week</strong><span class="small muted">${seen ? 'Watch again' : 'New · a quick look back'}</span></span><span aria-hidden="true" class="muted">›</span></button>`;
+  }
+  function openStory() { S.story = { i: 0, slides: storySlides() }; try { localStorage.setItem('eh-story', weekStart()); } catch (_) {} render(); }
+  function storyGo(n) { if (!S.story) return; if (n < 0) n = 0; if (n >= S.story.slides.length) { S.story = null; } else S.story.i = n; render(); }
+
+  // ----- H · Where the rent goes -----
+  function flowCat(c) { if (c === 'Mortgage') return 'Mortgage'; if (c === 'Property tax' || c === 'Insurance') return 'Taxes & insurance'; if (c === 'Gas') return 'Heat & gas'; return c || 'Other'; }
+  const FLOW_COL = ['#2F4A40', '#2B4C9B', '#C2552B', '#4C86A8', '#8A6FB0', '#7A847F'];
+  function flowData(k) {
+    const isPast = k < monthKey(new Date());
+    const rm = rentMonth(k);
+    const rentIn = rm.rows.filter((x) => !isHome(x.r.unit_id)).reduce((t, x) => t + (isPast ? x.got : Math.max(x.got, x.due || 0)), 0);
+    const g = new Map();
+    billMonth(k, true).rows.filter((r) => !r.b.escrow && !isHome(r.b.unit_id) && r.amt).forEach((r) => { const c = flowCat(r.b.category); g.set(c, (g.get(c) || 0) + r.amt); });
+    const up = upkeepSplit(k, false); if (up) g.set('Upkeep', (g.get('Upkeep') || 0) + up);
+    let outs = Array.from(g, ([name, v]) => ({ name, v })).sort((a, b) => b.v - a.v);
+    if (outs.length > 5) { const rest = outs.slice(4); outs = outs.slice(0, 4).concat({ name: 'Other', v: rest.reduce((t, x) => t + x.v, 0) }); }
+    outs.forEach((o, i) => { o.c = FLOW_COL[i % FLOW_COL.length]; });
+    const out = outs.reduce((t, x) => t + x.v, 0);
+    const keep = rentIn - out;
+    if (keep > 0.5) outs.push({ name: 'You keep', v: keep, c: 'var(--accent)', keep: true });
+    return { rentIn, outs, out, keep, pocket: keep < -0.5 ? -keep : 0, est: !isPast };
+  }
+  function flowCard() {
+    const k = S.month; const d = flowData(k);
+    if (!d.rentIn && !d.out) return '';
+    const total = d.rentIn + d.pocket;
+    const W = 340, H = 240, gap = 5, n = d.outs.length;
+    const usable = H - gap * (n - 1);
+    const sel = S.flowSel && d.outs.find((o) => o.name === S.flowSel) ? S.flowSel : (d.outs.find((o) => o.keep) || d.outs[0] || {}).name;
+    let ly = 0, ry = 0; const ribs = [];
+    d.outs.forEach((o, i) => {
+      const lh = (o.v / total) * H, rh = Math.max(6, (o.v / total) * usable);
+      const l0 = ly, l1 = ly + lh, r0 = ry, r1 = ry + rh;
+      const p = `M14 ${l0.toFixed(1)} C170 ${l0.toFixed(1)} 170 ${r0.toFixed(1)} ${W - 14} ${r0.toFixed(1)} L${W - 14} ${r1.toFixed(1)} C170 ${r1.toFixed(1)} 170 ${l1.toFixed(1)} 14 ${l1.toFixed(1)} Z`;
+      const mid = `M14 ${((l0 + l1) / 2).toFixed(1)} C170 ${((l0 + l1) / 2).toFixed(1)} 170 ${((r0 + r1) / 2).toFixed(1)} ${W - 14} ${((r0 + r1) / 2).toFixed(1)}`;
+      ribs.push(`<defs><linearGradient id="fg${i}" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stop-color="#C9A15A"/><stop offset=".55" stop-color="${o.c}"/></linearGradient></defs><g class="rib${o.name === sel ? ' on' : ''}" data-act="flow-sel" data-k="${esc(o.name)}" style="animation-delay:${(i * 0.08).toFixed(2)}s"><path d="${p}" fill="url(#fg${i})"/>${lh > 3 ? `<path class="ribflow" d="${mid}"/>` : ''}</g><rect x="${W - 12}" y="${r0.toFixed(1)}" width="12" height="${rh.toFixed(1)}" rx="3" fill="${o.c}"/>`);
+      ly = l1; ry = r1 + gap;
+    });
+    const rentH = (d.rentIn / total) * H;
+    const left = `<rect x="0" y="0" width="12" height="${rentH.toFixed(1)}" rx="3" fill="#C9A15A"/>${d.pocket ? `<rect x="0" y="${rentH.toFixed(1)}" width="12" height="${(H - rentH).toFixed(1)}" rx="3" fill="var(--late-fg)"/>` : ''}`;
+    const fmt = (v) => S.flowPct ? Math.round((v / (d.rentIn || total)) * 100) + '%' : money0(v);
+    const s = d.outs.find((o) => o.name === sel);
+    const per100 = s && d.rentIn ? Math.round((s.v / d.rentIn) * 100) : null;
+    const detail = s ? (s.keep ? `You keep <strong>$${per100}</strong> of every $100 of rent.` : per100 != null && per100 > 100 ? `<strong>${esc(s.name)}</strong> alone is more than the rent: ${money0(s.v)} vs ${money0(d.rentIn)}.` : per100 != null ? `<strong>${esc(s.name)}</strong> takes <strong>$${per100}</strong> of every $100 of rent.` : `<strong>${esc(s.name)}</strong> · ${money0(s.v)}`) : '';
+    return `<section class="card flow" aria-label="Where the rent goes">
+      <div class="row between"><h2>Where the rent goes · ${monthLabel(k, true)}</h2><div class="seg mini" role="group" aria-label="Show as">${[[0, '$'], [1, '%']].map(([v, l]) => `<button type="button" data-act="flow-mode" data-v="${v}" aria-pressed="${!!S.flowPct === !!v}">${l}</button>`).join('')}</div></div>
+      <div class="flow-ends small"><span><i style="background:#C9A15A"></i>Rent ${d.est ? 'due' : 'in'} · <strong class="num">${money0(d.rentIn)}</strong></span>${d.pocket ? `<span class="late"><i style="background:var(--late-fg)"></i>From your pocket · <strong class="num">${money0(d.pocket)}</strong></span>` : ''}</div>
+      <svg class="flowsvg" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Rent of ${money0(d.rentIn)} split into ${d.outs.map((o) => o.name + ' ' + money0(o.v)).join(', ')}">${left}${ribs.join('')}</svg>
+      <p class="flow-detail" aria-live="polite">${detail}</p>
+      <ul class="flow-legend">${d.outs.map((o) => `<li><button type="button" data-act="flow-sel" data-k="${esc(o.name)}" aria-pressed="${o.name === sel}"><i style="background:${o.c}"></i><span>${esc(o.name)}</span><strong class="num">${fmt(o.v)}</strong></button></li>`).join('')}</ul>
+      ${d.est ? '<p class="small muted" style="margin:0">Uses this month’s bills and the rent that’s due.</p>' : ''}
+    </section>`;
+  }
+
+  // ----- Polished 2 · Bill detail header -----
+  const CAT_ICON = { Electric: '⚡', Gas: '🔥', Water: '💧', Mortgage: '🏠', Insurance: '🛡', 'Property tax': '🏛', Trash: '🗑', 'Internet & phone': '📶', Contractor: '🔧' };
+  function billDetailTop(b, pay) {
+    const k = S.month; const amt = amountFor(b, pay);
+    const paid = !!(pay && pay.paid_at);
+    const months = []; for (let i = 11; i >= 0; i--) { const mk = addMonths(k, -i); const p = getPay(b, mk); months.push({ k: mk, v: p ? amountFor(b, p) : null }); }
+    const vals = months.map((x) => x.v).filter((v) => v != null && v > 0);
+    const max = Math.max(1, ...vals);
+    const avg = vals.length ? vals.reduce((t, n) => t + n, 0) / vals.length : null;
+    const selI = S.bdSel && S.bdSel.id === b.id && S.bdSel.k === k ? S.bdSel.i : 11;
+    const sm = months[selI];
+    const ly = lastYear(b, k);
+    const delta = amt != null && ly ? amt - ly : null;
+    const st = statusFor(b, pay, k);
+    const due = dueOn(b.due_day, k);
+    const pts = months.map((x, i) => x.v != null && x.v > 0 ? [((i + 0.5) / 12) * 100, 100 - (x.v / max) * 100] : null).filter(Boolean);
+    const trend = pts.length >= 3 ? `<svg class="bd-trend" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path pathLength="1" d="${pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ')}"/></svg>` : '';
+    const bars = months.map((x, i) => `<button type="button" class="bd-bar${i === selI ? ' sel' : ''}${i === 11 ? ' cur' : ''}" data-act="bd-bar" data-id="${b.id}" data-i="${i}" aria-pressed="${i === selI}" aria-label="${monthLabel(x.k)}: ${x.v != null ? money(x.v) : 'no amount'}"><i style="height:${x.v ? Math.max(4, Math.round((x.v / max) * 100)) : 2}%;animation-delay:${(i * 0.04).toFixed(2)}s"></i><span>${monthLabel(x.k, true).slice(0, 1)}</span></button>`).join('');
+    const justPaid = paid && FX.stamp === b.id && Date.now() < FX.stampUntil;
+    const slide = b.escrow ? '' : `<button type="button" class="slidepay${paid ? ' on' : ''}${justPaid ? ' slid' : ''}" data-act="toggle" data-id="${b.id}" aria-pressed="${paid}" aria-label="${paid ? 'Paid. Tap to mark unpaid' : 'Mark ' + esc(billTitle(b)) + ' paid'}"><span class="sp-knob" aria-hidden="true">${paid ? '✓' : '→'}</span><span class="sp-label">${paid ? 'Paid ' + fmtDay(new Date(pay.paid_at)) + ' · tap to undo' : 'Slide to mark paid'}</span>${justPaid ? '<span class="paidstamp slam" aria-hidden="true">PAID</span>' : ''}</button>`;
+    return `<section class="bd-hero">
+        <div class="row" style="gap:12px"><span class="bd-icon" aria-hidden="true">${CAT_ICON[b.category] || '🧾'}</span><span class="stack" style="gap:0;min-width:0"><strong class="display bd-name">${esc(b.name)}</strong><span class="small bd-sub">${esc((b.label ? b.label + ' · ' : '') + unitName(b.unit_id))} · ${esc(st.label)}</span></span></div>
+        <div class="row" style="gap:10px;align-items:baseline;flex-wrap:wrap"><span class="display num bd-amt">${amt != null ? money(amt) : '—'}</span>${delta != null && Math.abs(delta) >= 1 ? `<span class="bd-chip">${delta > 0 ? '▲' : '▼'} ${money0(Math.abs(delta))} vs ${monthLabel(addMonths(k, -12), true)} ’${addMonths(k, -12).slice(2, 4)}</span>` : ''}</div>
+        ${due && !paid ? `<span class="small bd-sub">Due ${due.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>` : ''}
+      </section>
+      ${vals.length >= 2 ? `<section class="card bd-chart" aria-label="Last 12 months">
+        <div class="row between"><h2>Last 12 months</h2><span class="small muted">Tap a bar</span></div>
+        <div class="bd-plot">${trend}<div class="bd-bars">${bars}</div></div>
+        <div class="grid2"><div class="stat"><span class="small muted">${monthLabel(sm.k)}</span><span class="v display num">${sm.v != null ? money(sm.v) : '—'}</span></div><div class="stat"><span class="small muted">12-month average</span><span class="v display num">${avg != null ? money(avg) : '—'}</span></div></div>
+      </section>` : ''}
+      ${slide}`;
   }
 
   // ----- Rent tab -----
@@ -1489,7 +1746,7 @@
         <div class="hist2">${rows.map((r) => `<div class="col ${r.k === S.month ? 'cur' : ''}">
           <div class="pair"><div class="b in" style="height:${Math.round((r.inc / max) * 100)}%" title="In ${money0(r.inc)}"></div><div class="b out" style="height:${Math.round((r.out / max) * 100)}%" title="Out ${money0(r.out)}"></div></div>
           <span>${monthLabel(r.k, true)}</span></div>`).join('')}</div>`;
-    return `${monthNav()}
+    return `${storyBar()}${monthNav()}
       ${recapCard()}
       <h2 class="section-h" style="margin:0">${esc(propName)} · rental${homes.length ? ' <span class="small muted" style="font-weight:500">(without ' + esc(homes.join(', ')) + ')</span>' : ''}</h2>
       <div class="grid2">
@@ -1498,6 +1755,7 @@
         <div class="stat"><span class="small muted">Upkeep spent</span><span class="v display num">${money(up)}</span></div>
         <div class="stat"><span class="small muted">Net for ${monthLabel(S.month, true)}</span><span class="v display num" style="color:${net < 0 ? 'var(--late-fg)' : 'var(--paid-fg)'}">${net < 0 ? '−' : ''}${money(Math.abs(net))}</span></div>
       </div>
+      ${flowCard()}
       <section class="card" aria-label="Money in and out, last 6 months">
         <h2>In vs. out · 6 months</h2>
         <div class="legend small"><span><i class="sw in"></i>Rent in</span><span><i class="sw out"></i>Bills + upkeep out</span></div>
@@ -1690,7 +1948,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.6</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.7</p>`;
   }
 
   function importCard() {
@@ -2105,7 +2363,7 @@ function setup() {
         ${f('b-url', 'Payment website', inp('b-url', 'pay_url', b.pay_url, 'type="url" inputmode="url" placeholder="https://"'))}
         ${f('b-notes', 'Notes', `<textarea class="input" id="b-notes" name="notes">${esc(b.notes)}</textarea>`)}
       </section>`;
-    return sheetShell(isNew ? 'Add bill' : billTitle(b), 'bill', month + loan + details, isNew ? null : 'Delete bill and its history');
+    return sheetShell(isNew ? 'Add bill' : billTitle(b), 'bill', (isNew ? '' : billDetailTop(b, pay)) + month + loan + details, isNew ? null : 'Delete bill and its history');
   }
 
   function rentalSheet(sh) {
@@ -2269,10 +2527,10 @@ function setup() {
       case 'mic': {
         const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) break;
         if (S.listening && window.__rec) { window.__rec.stop(); break; }
-        const rec = new SR(); window.__rec = rec; rec.lang = 'en-US'; rec.interimResults = true; rec.continuous = false;
+        const tgt = el.dataset.target || 'qa-text'; const rec = new SR(); window.__rec = rec; rec.lang = 'en-US'; rec.interimResults = true; rec.continuous = false;
         S.listening = true; render();
-        rec.onresult = (ev) => { const t = Array.from(ev.results).map((r) => r[0].transcript).join(' '); const n = document.getElementById('qa-text'); if (n) n.value = t; S.quick = Object.assign({}, S.quick, { text: t }); };
-        rec.onend = () => { S.listening = false; render(); const n = document.getElementById('qa-text'); if (n && n.value.trim()) n.form.requestSubmit(); };
+        rec.onresult = (ev) => { const t = Array.from(ev.results).map((r) => r[0].transcript).join(' '); const n = document.getElementById(tgt); if (n) n.value = t; if (tgt === 'qa-text') S.quick = Object.assign({}, S.quick, { text: t }); };
+        rec.onend = () => { S.listening = false; render(); const n = document.getElementById(tgt); if (n && n.value.trim()) n.form.requestSubmit(); };
         rec.onerror = () => { S.listening = false; render(); toast('Couldn’t hear that. Try typing.'); };
         rec.start(); break;
       }
@@ -2280,6 +2538,26 @@ function setup() {
       case 'recap': makeRecap(); break;
       case 'ask-open': S.sheet = { type: 'ask' }; FX.sheetEnter = true; render(); setTimeout(() => { const n = document.getElementById('ask-q'); if (n) n.focus(); }, 300); break;
       case 'ask-suggest': askQuestion(el.dataset.q); break;
+      case 'ask-apply': { const m = (S.askLog || [])[+el.dataset.i]; if (!m || m.applied) break; const acts = m.actions.filter((a) => describeAction(a).ok); acts.forEach(applyAction); m.applied = 'yes'; render(); toast(acts.length === 1 ? 'Saved' : 'Saved ' + acts.length + ' items'); break; }
+      case 'ask-skip': { const m = (S.askLog || [])[+el.dataset.i]; if (m) { m.applied = 'no'; render(); } break; }
+      case 'bills-view': S.billsView = el.dataset.v; try { localStorage.setItem('eh-bview', S.billsView); } catch (_) {} render(); break;
+      case 'cal-day': S.calDay = { k: S.month, d: +el.dataset.d }; render(); break;
+      case 'cal-open': { const kd = el.dataset.kind; if (kd === 'bill') openSheet('bill', id); else if (kd === 'rent') openSheet('rental', id); else openSheet('task', id); break; }
+      case 'story-open': openStory(); break;
+      case 'story-close': S.story = null; render(); break;
+      case 'story-next': storyGo(S.story ? S.story.i + 1 : 0); break;
+      case 'story-prev': storyGo(S.story ? S.story.i - 1 : 0); break;
+      case 'story-cta': {
+        const g = el.dataset.go; S.story = null;
+        if (g === 'go-bills') { S.tab = 'bills'; S.billsView = 'list'; S.month = monthKey(new Date()); }
+        else if (g === 'go-rent') { S.tab = 'rent'; S.month = monthKey(new Date()); }
+        else if (g === 'go-cal') { S.tab = 'bills'; S.billsView = 'cal'; S.month = monthKey(new Date()); }
+        else if (g.startsWith('explain:')) { const bid = g.slice(8); S.month = monthKey(new Date()); render(); openSheet('bill', bid); explainBill(bid); break; }
+        window.scrollTo(0, 0); render(); break;
+      }
+      case 'flow-sel': S.flowSel = el.dataset.k; render(); break;
+      case 'flow-mode': S.flowPct = el.dataset.v === '1'; render(); break;
+      case 'bd-bar': S.bdSel = { id, k: S.month, i: +el.dataset.i }; render(); break;
       case 'payoff-open': S.sheet = { type: 'payoff' }; FX.sheetEnter = true; render(); break;
       case 'payoff-term': S.payoff = Object.assign({}, S.payoff, { NT: +el.dataset.t }); render(); break;
       case 'renew': openSheet('renew', id); break;
@@ -2753,16 +3031,37 @@ function setup() {
   document.addEventListener('input', (e) => { if (e.target.dataset && e.target.dataset.input === 'docq') { S.docQuery = e.target.value; render(); } });
   document.addEventListener('submit', (e) => { e.preventDefault(); onSubmit(e.target); });
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && S.story) { S.story = null; render(); return; }
+    if (S.story && e.key === 'ArrowRight') { storyGo(S.story.i + 1); return; }
+    if (S.story && e.key === 'ArrowLeft') { storyGo(S.story.i - 1); return; }
     if (e.key === 'Escape' && S.sheet) { S.sheet = null; render(); }
     if (e.key === 'Enter' && e.target.dataset && (e.target.dataset.change === 'amount' || e.target.dataset.change === 'due')) { e.preventDefault(); e.target.blur(); }
   });
   window.addEventListener('online', () => { S.online = true; flush().then(loadAll); });
   window.addEventListener('offline', () => { S.online = false; render(); });
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvt = e; renderSoon(); });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.view === 'app' && navigator.onLine && !S.sheet) loadAll(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.view === 'app' && navigator.onLine && !S.sheet && !S.story) loadAll(); });
 
   // Swipe cards right (paid) / left (details); swipe the month header to change month
   let suppressClick = 0;
+  // Weekly story: move to the next slide when its progress bar fills
+  document.addEventListener('animationend', (e) => { if (S.story && e.target.matches && e.target.matches('.sbar i.on')) storyGo(S.story.i + 1); });
+  // Bill detail: drag the knob across to mark paid (a tap works too)
+  (function slidePay() {
+    let tr = null, kn = null, x0 = 0, max = 0, dx = 0, moved = false;
+    document.addEventListener('pointerdown', (e) => {
+      const t = e.target.closest && e.target.closest('.slidepay'); if (!t || t.classList.contains('on')) return;
+      tr = t; kn = t.querySelector('.sp-knob'); x0 = e.clientX; max = t.clientWidth - kn.offsetWidth - 12; dx = 0; moved = false; kn.style.transition = 'none';
+    });
+    document.addEventListener('pointermove', (e) => { if (!tr) return; dx = Math.max(0, Math.min(max, e.clientX - x0)); if (dx > 6) moved = true; kn.style.transform = 'translateX(' + dx + 'px)'; });
+    const end = () => {
+      if (!tr) return; const t = tr; tr = null; kn.style.transition = '';
+      if (!moved) { kn.style.transform = ''; return; }
+      suppressClick = Date.now() + 400; // the drag decides, not the click that follows it
+      if (dx > max * 0.65) { kn.style.transform = 'translateX(' + max + 'px)'; setTimeout(() => onAct(t), 120); } else kn.style.transform = '';
+    };
+    document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
+  })();
   (function swipes() {
     let el = null, x0 = 0, y0 = 0, dx = 0, mode = null;
     document.addEventListener('pointerdown', (e) => {
