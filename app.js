@@ -22,7 +22,7 @@
     view: 'loading', // loading | auth | recovery | join | app
     authErr: '', joinErr: '',
     user: null, household: null, member: null, units: [], bills: [], payments: {},
-    rentals: [], rentPays: {}, tasks: [], logs: [], imports: [], appliances: [], contractors: [], documents: [], docQuery: '',
+    rentals: [], rentPays: {}, tasks: [], logs: [], imports: [], appliances: [], contractors: [], documents: [], docQuery: '', leases: [], inspections: [], requests: [], inspDraft: null,
     tab: 'bills', month: monthKey(new Date()), unit: 'all', filter: 'all', upkeepView: 'upcoming',
     editing: null, sheet: null, sheetErr: '', deleteArm: false,
     online: navigator.onLine, pending: 0, pushState: 'unknown', installEvt: null, busy: false
@@ -58,7 +58,8 @@
   function num(v) { if (v === '' || v == null) return null; const n = parseFloat(String(v).replace(/[$,]/g, '')); return isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null; }
   function uuid() { return (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); })); }
   function unitName(id) { const u = S.units.find((x) => x.id === id); return u ? u.name : 'Whole house'; }
-  function isFloor(name) { return /floor/i.test(name); }
+  // Anything other than the whole house is its own place: floors, or another property like Cedarcroft
+  function isFloor(name) { return !!name && !/^whole house$/i.test(name.trim()); }
   function wholeId() { return (S.units.find((u) => !isFloor(u.name)) || {}).id || null; }
   function billTitle(b) { return b.label ? b.name + ' · ' + b.label : b.name; }
   function payKey(id, period) { return id + '|' + period; }
@@ -99,7 +100,7 @@
   // ---------- local cache + offline outbox ----------
   const cacheKey = () => 'eh-cache-' + (S.user ? S.user.id : 'anon');
   const OUTBOX = 'eh-outbox';
-  const CACHED = ['household', 'member', 'units', 'bills', 'payments', 'rentals', 'rentPays', 'tasks', 'logs', 'imports', 'appliances', 'contractors', 'documents'];
+  const CACHED = ['household', 'member', 'units', 'bills', 'payments', 'rentals', 'rentPays', 'tasks', 'logs', 'imports', 'appliances', 'contractors', 'documents', 'leases', 'inspections', 'requests'];
   function saveCache() {
     try { const o = {}; CACHED.forEach((k) => { o[k] = S[k]; }); localStorage.setItem(cacheKey(), JSON.stringify(o)); } catch (_) {}
   }
@@ -145,7 +146,7 @@
   // ---------- data ----------
   async function loadAll() {
     const cached = readCache();
-    if (cached && cached.household) { Object.assign(S, cached); S.rentals = S.rentals || []; S.rentPays = S.rentPays || {}; S.tasks = S.tasks || []; S.logs = S.logs || []; S.appliances = S.appliances || []; S.contractors = S.contractors || []; S.documents = S.documents || []; S.imports = S.imports || []; S.view = 'app'; render(); }
+    if (cached && cached.household) { Object.assign(S, cached); S.rentals = S.rentals || []; S.rentPays = S.rentPays || {}; S.tasks = S.tasks || []; S.logs = S.logs || []; S.appliances = S.appliances || []; S.contractors = S.contractors || []; S.documents = S.documents || []; S.imports = S.imports || []; S.leases = S.leases || []; S.inspections = S.inspections || []; S.requests = S.requests || []; S.view = 'app'; render(); }
     await flush();
     if (readOutbox().length) return; // still offline; keep local copy
     try {
@@ -166,12 +167,15 @@
         sb.from('email_imports').select('*').eq('household_id', hid).order('created_at', { ascending: false }).limit(40),
         sb.from('appliances').select('*').eq('household_id', hid).order('created_at'),
         sb.from('contractors').select('*').eq('household_id', hid).order('name'),
-        sb.from('documents').select('*').eq('household_id', hid).order('created_at', { ascending: false })
+        sb.from('documents').select('*').eq('household_id', hid).order('created_at', { ascending: false }),
+        sb.from('lease_history').select('*').eq('household_id', hid).order('lease_end', { ascending: false }),
+        sb.from('inspections').select('*').eq('household_id', hid).order('done_on', { ascending: false }),
+        sb.from('repair_requests').select('*').eq('household_id', hid).order('created_at', { ascending: false }).limit(100)
       ]);
       res.forEach((r) => { if (r.error) throw r.error; });
-      const [u, b, p, r, rp, t, l, im, ap, co, dc] = res.map((x) => x.data);
+      const [u, b, p, r, rp, t, l, im, ap, co, dc, lh, ins, rq] = res.map((x) => x.data);
       S.household = m.households; delete m.households; S.member = m;
-      S.units = u; S.bills = b; S.rentals = r; S.tasks = t; S.logs = l; S.imports = im; S.appliances = ap; S.contractors = co; S.documents = dc;
+      S.units = u; S.bills = b; S.rentals = r; S.tasks = t; S.logs = l; S.imports = im; S.appliances = ap; S.contractors = co; S.documents = dc; S.leases = lh; S.inspections = ins; S.requests = rq;
       S.payments = {}; p.forEach((x) => { S.payments[payKey(x.bill_id, x.period)] = x; });
       S.rentPays = {}; rp.forEach((x) => { S.rentPays[payKey(x.rental_id, x.period)] = x; });
       saveCache();
@@ -218,7 +222,7 @@
     S.rentPays[payKey(r.id, period)] = row;
     queue({ kind: 'upsert', table: 'rent_payments', row: row, onConflict: 'rental_id,period' });
   }
-  const TABLES = { appliances: 'appliances', contractors: 'contractors', documents: 'documents' };
+  const TABLES = { appliances: 'appliances', contractors: 'contractors', documents: 'documents', leases: 'lease_history', inspections: 'inspections', requests: 'repair_requests' };
   function saveRow(list, row) { upsertLocal(S[list], row); queue({ kind: 'upsert', table: TABLES[list], row }); }
   function deleteRow(list, id) { S[list] = S[list].filter((x) => x.id !== id); queue({ kind: 'delete', table: TABLES[list], id }); }
   function saveTask(t) { upsertLocal(S.tasks, t); queue({ kind: 'upsert', table: 'maintenance_tasks', row: t }); }
@@ -469,12 +473,14 @@
   function rentTab() {
     const md = rentMonth(S.month);
     const pct = md.expected > 0 ? Math.min(100, Math.round((md.received / md.expected) * 100)) : 0;
-    const soon = S.rentals.filter((r) => r.active !== false && r.lease_end && dayDiff(fromIso(r.lease_end)) <= 60 && dayDiff(fromIso(r.lease_end)) >= -30);
+    const soon = S.rentals.filter((r) => r.active !== false && !r.move_out_on && r.lease_end && dayDiff(fromIso(r.lease_end)) <= 90 && dayDiff(fromIso(r.lease_end)) >= -30);
+    const depDue = S.rentals.filter((r) => r.move_out_on && !r.deposit_returned_on);
     const needs = md.rows.filter((x) => x.st.k === 'setup').length;
     return `${monthNav()}
       ${hero('Rent collected', money(md.received), pct, 'of ' + money(md.expected) + ' expected', md.late ? md.late + ' late' : 'None late', md.late)}
       ${needs ? `<p class="notice">Add each tenant’s rent amount so the app can track it. Tap <strong>Details</strong> on the card.</p>` : ''}
-      ${soon.map((r) => { const d = dayDiff(fromIso(r.lease_end)); return `<p class="notice info">${esc(rentalTitle(r))}’s lease ${d < 0 ? 'ended' : 'ends'} ${fmtDate(fromIso(r.lease_end))}${d >= 0 ? ' (' + d + ' days)' : ''}.</p>`; }).join('')}
+      ${soon.map((r) => { const d = dayDiff(fromIso(r.lease_end)); return `<p class="notice info">${esc(rentalTitle(r))}’s lease ${d < 0 ? 'ended' : 'ends'} ${fmtDate(fromIso(r.lease_end))}${d >= 0 ? ' (' + d + ' days)' : ''}. <button class="linkbtn" data-act="renew" data-id="${r.id}" style="min-height:0;padding:0">Renew</button> or <button class="linkbtn" data-act="moveout" data-id="${r.id}" style="min-height:0;padding:0">plan move-out</button></p>`; }).join('')}
+      ${depDue.map((r) => { const by = new Date(fromIso(r.move_out_on).getTime() + 14 * 86400000); const d = dayDiff(by); return `<p class="notice${d <= 3 ? '' : ' info'}">Return ${esc(rentalTitle(r))}’s deposit${r.deposit ? ' (' + money(r.deposit) + ')' : ''} with an itemized list by <strong>${fmtDate(by)}</strong>${d >= 0 ? ' (' + d + ' days)' : ' (overdue)'}. <button class="linkbtn" data-act="moveout" data-id="${r.id}" style="min-height:0;padding:0">Record it</button></p>`; }).join('')}
       ${unmatchedCard()}
       ${md.rows.length ? `<ul class="bills">${md.rows.map(rentCard).join('')}</ul>` : '<p class="muted" style="text-align:center;padding:28px 0">No tenants yet. Tap + to add one.</p>'}
       ${mortgageCard()}`;
@@ -497,6 +503,7 @@
       <div class="btns">
         ${!done && x.due != null && r.phone ? `<a class="btn" href="sms:${esc(r.phone.replace(/[^\d+]/g, ''))}${isIOS ? '&' : '?'}body=${msg}">Text reminder</a>` : ''}
         ${r.phone ? `<a class="btn" href="tel:${esc(r.phone.replace(/[^\d+]/g, ''))}">Call</a>` : ''}
+        ${x.got > 0 ? `<button class="btn" data-act="receipt" data-id="${r.id}">Receipt</button>` : ''}
         <button class="btn" data-act="rental" data-id="${r.id}" style="flex:1">Details</button>
       </div>
     </li>`;
@@ -551,7 +558,7 @@
     } else {
       const sched = tasks.filter((x) => x.st.k !== 'setup');
       const un = tasks.filter((x) => x.st.k === 'setup');
-      body = (sched.length ? `<ul class="bills">${sched.map(taskCard).join('')}</ul>` : '') +
+      body = requestsSection() + (sched.length ? `<ul class="bills">${sched.map(taskCard).join('')}</ul>` : '') +
         (un.length ? `<h2 class="section-h">Not scheduled yet</h2><p class="small muted" style="margin:-8px 0 0">Tap <strong>Done</strong> and enter when it was last done; the app works out the next date.</p><ul class="bills">${un.map(taskCard).join('')}</ul>` : '') +
         (!tasks.length ? '<p class="muted" style="text-align:center;padding:28px 0">No upkeep tasks. Tap + to add one.</p>' : '');
     }
@@ -726,8 +733,8 @@
           ${rows.slice().reverse().map((r) => `<tr><th scope="row">${monthLabel(r.k, true)}</th><td class="num">${money0(r.inc)}</td><td class="num">${money0(r.out)}</td><td class="num" style="color:${r.net < 0 ? 'var(--late-fg)' : 'inherit'}">${r.net < 0 ? '−' : ''}${money0(Math.abs(r.net))}</td></tr>`).join('')}
         </tbody></table>
       </section>
-      <section class="card" aria-label="Bills by floor">
-        <h2>Bills by floor · ${monthLabel(S.month, true)}</h2>
+      <section class="card" aria-label="Bills by place">
+        <h2>Bills by place · ${monthLabel(S.month, true)}</h2>
         ${byFloor.map((g) => `<div class="stack" style="gap:6px"><div class="row between small"><span>${esc(g.name)} <span class="muted">· ${g.n} ${g.n === 1 ? 'bill' : 'bills'}</span></span><strong class="num">${money(g.total)}</strong></div><div class="meter"><div style="width:${Math.max(2, Math.round((g.total / fMax) * 100))}%"></div></div></div>`).join('')}
       </section>
       <section class="card" aria-label="Bills by category">
@@ -802,7 +809,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v1.6</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v1.7</p>`;
   }
 
   function importCard() {
@@ -957,8 +964,141 @@ function setup() {
     if (sh.type === 'appliance' || sh.type === 'new-appliance') return applianceSheet(sh);
     if (sh.type === 'contractor' || sh.type === 'new-contractor') return contractorSheet(sh);
     if (sh.type === 'doc' || sh.type === 'new-doc') return docSheet(sh);
+    if (sh.type === 'renew') return renewSheet(sh);
+    if (sh.type === 'moveout') return moveoutSheet(sh);
+    if (sh.type === 'inspections') return inspectionsSheet(sh);
+    if (sh.type === 'inspection') return inspectionSheet();
+    if (sh.type === 'request') return requestSheet(sh);
     return '';
   }
+  function portalUrl(r) { return CFG.APP_URL + 'tenant.html?t=' + r.portal_token; }
+  function renewSheet(sh) {
+    const r = S.rentals.find((x) => x.id === sh.id); if (!r) return '';
+    const start = r.lease_end ? addMonthsIso(r.lease_end, 0) : isoDate(today());
+    const s0 = r.lease_end ? isoDate(new Date(fromIso(r.lease_end).getTime() + 86400000)) : start;
+    return sheetShell('Renew lease · ' + rentalTitle(r), 'renew', `<section class="card">
+      <div class="grid2">${f('rn-start', 'New lease start', inp('rn-start', 'start', s0, 'type="date" required'))}${f('rn-end', 'New lease end', inp('rn-end', 'end', addMonthsIso(s0, 12), 'type="date" required'))}</div>
+      ${f('rn-rent', 'New monthly rent ($)', moneyInp('rn-rent', 'rent', r.rent_amount))}
+      ${r.rent_amount ? `<p class="small muted">Current rent ${money(r.rent_amount)}. NY generally requires written notice of a rent increase of 5% or more: 30 days for tenants of under 1 year, 60 days for 1–2 years, 90 days for over 2 years.</p>` : ''}
+      ${f('rn-notes', 'Notes', inp('rn-notes', 'notes', '', 'placeholder="e.g. signed renewal saved in Docs"'))}
+      <p class="small muted">The current lease is saved to the lease history.</p>
+    </section>`, null);
+  }
+  function moveoutSheet(sh) {
+    const r = S.rentals.find((x) => x.id === sh.id); if (!r) return '';
+    const by = r.move_out_on ? new Date(fromIso(r.move_out_on).getTime() + 14 * 86400000) : null;
+    const insp = S.inspections.filter((i) => i.rental_id === r.id);
+    return sheetShell('Move-out · ' + rentalTitle(r), 'moveout', `<section class="card">
+      ${f('mo-date', 'Move-out date', inp('mo-date', 'move_out_on', r.move_out_on || r.lease_end, 'type="date" required'))}
+      ${by ? `<p class="notice info">Return the deposit, or an itemized list of deductions, by <strong>${fmtDate(by)}</strong>: NY requires it within 14 days of move-out.</p>` : ''}
+      <ol class="steps small">
+        <li>Do a move-out inspection with photos ${insp.some((i) => i.kind === 'Move-out') ? '✓' : `· <button type="button" class="linkbtn" data-act="inspect-new" data-id="${r.id}" data-kind="Move-out" style="min-height:0;padding:0">start one</button>`}</li>
+        <li>Compare with the move-in inspection${insp.some((i) => i.kind === 'Move-in') ? ' ✓' : ' (none on file)'}.</li>
+        <li>Itemize any deductions (damage beyond normal wear, unpaid rent).</li>
+        <li>Return the rest of the deposit${r.deposit ? ' (' + money(r.deposit) + ' held)' : ''}.</li>
+      </ol>
+    </section>
+    <section class="card"><h2>Deposit returned</h2>
+      <div class="grid2">${f('mo-amt', 'Amount returned ($)', moneyInp('mo-amt', 'deposit_returned_amount', r.deposit_returned_amount))}${f('mo-on', 'Returned on', inp('mo-on', 'deposit_returned_on', r.deposit_returned_on, 'type="date"'))}</div>
+      ${f('mo-ded', 'Deductions (itemized)', `<textarea class="input" id="mo-ded" name="deposit_deductions" placeholder="e.g. Broken blinds, bedroom 1: $80">${esc(r.deposit_deductions)}</textarea>`)}
+      <label class="checkrow"><input type="checkbox" name="archive" ${r.active === false ? 'checked' : ''}> Tenant has moved out: hide from the Rent tab (history is kept)</label>
+    </section>`, null);
+  }
+  const ROOMS = ['Entry & hallway', 'Living room', 'Kitchen', 'Bathroom', 'Bedroom 1', 'Bedroom 2', 'Appliances', 'Windows & doors', 'Floors & walls', 'Smoke & CO detectors'];
+  const CONDITIONS = ['Good', 'Fair', 'Poor', 'Damaged'];
+  function inspectionsSheet(sh) {
+    const r = S.rentals.find((x) => x.id === sh.id); if (!r) return '';
+    const list = S.inspections.filter((i) => i.rental_id === r.id);
+    return `<div class="sheet-bg" data-act="sheet-close-bg"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <div class="grabber" aria-hidden="true"></div>
+      <div class="sheet-head"><h2 id="sheet-title" class="display">Inspections · ${esc(rentalTitle(r))}</h2><button class="iconbtn" data-act="sheet-close" aria-label="Close">${ICON.close}</button></div>
+      <div class="btns"><button class="btn" data-act="inspect-new" data-id="${r.id}" data-kind="Move-in" style="flex:1">New move-in</button><button class="btn" data-act="inspect-new" data-id="${r.id}" data-kind="Move-out" style="flex:1">New move-out</button><button class="btn" data-act="inspect-new" data-id="${r.id}" data-kind="Routine" style="flex:1">Routine</button></div>
+      ${list.length ? `<ul class="bills">${list.map((i) => { const ph = (i.items || []).reduce((t, x) => t + ((x.photos || []).length), 0); const bad = (i.items || []).filter((x) => x.condition === 'Poor' || x.condition === 'Damaged').length;
+        return `<li><button class="bill logrow" data-act="inspect-open" data-id="${i.id}"><div class="bill-info"><span class="bill-name">${esc(i.kind)} · ${fmtDate(fromIso(i.done_on))}</span><span class="small muted">${(i.items || []).length} areas · ${ph} ${ph === 1 ? 'photo' : 'photos'}${bad ? ' · ' + bad + ' need attention' : ''}</span></div></button></li>`; }).join('')}</ul>` : '<p class="muted small">No inspections yet. Do one at move-in and again at move-out, with photos, to settle deposit questions.</p>'}
+    </div></div>`;
+  }
+  function inspectionSheet() {
+    const d = S.inspDraft; if (!d) return '';
+    const r = S.rentals.find((x) => x.id === d.rental_id);
+    return sheetShell(d.kind + ' inspection' + (r ? ' · ' + rentalTitle(r) : ''), 'inspection', `<section class="card">
+      <div class="grid2">${f('in-kind', 'Type', `<select class="input" id="in-kind" data-change="insp-meta" data-k="kind">${opts(['Move-in', 'Move-out', 'Routine'], d.kind)}</select>`)}${f('in-date', 'Date', `<input class="input" id="in-date" type="date" value="${esc(d.done_on)}" data-change="insp-meta" data-k="done_on">`)}</div>
+    </section>
+    ${d.items.map((it, i) => `<section class="card">
+      <div class="row between"><h2>${esc(it.room)}</h2><button type="button" class="iconbtn" data-act="insp-del" data-i="${i}" aria-label="Remove ${esc(it.room)}">${ICON.close}</button></div>
+      <div class="seg" role="group" aria-label="Condition of ${esc(it.room)}">${CONDITIONS.map((c) => `<button type="button" data-act="insp-cond" data-i="${i}" data-c="${c}" aria-pressed="${it.condition === c}">${c}</button>`).join('')}</div>
+      <label class="sr" for="in-note-${i}">Notes for ${esc(it.room)}</label><input class="input" id="in-note-${i}" value="${esc(it.note || '')}" placeholder="Notes (scratches, stains, what’s broken…)" data-change="insp-note" data-i="${i}">
+      <div class="row wrap" style="gap:8px">
+        ${(it.photos || []).map((ph, j) => `<button type="button" class="btn" data-act="file-open" data-path="${esc(ph)}">Photo ${j + 1}</button>`).join('')}
+        <label class="btn"><input type="file" accept="image/*" class="sr" data-change="insp-photo" data-i="${i}"> + Photo</label>
+      </div>
+    </section>`).join('')}
+    <section class="card"><div class="row" style="gap:8px"><label class="sr" for="in-room">Add an area</label><input class="input" id="in-room" placeholder="Add an area, e.g. Basement" style="flex:1"><button type="button" class="btn" data-act="insp-add">Add</button></div>
+      ${f('in-notes', 'Overall notes', `<textarea class="input" id="in-notes" data-change="insp-meta" data-k="notes">${esc(d.notes || '')}</textarea>`)}</section>`, d.id && S.inspections.some((x) => x.id === d.id) ? 'Delete inspection' : null);
+  }
+  function requestSheet(sh) {
+    const q = S.requests.find((x) => x.id === sh.id); if (!q) return '';
+    const r = S.rentals.find((x) => x.id === q.rental_id);
+    return sheetShell(q.title, 'request', `<section class="card">
+      <span class="small muted">${esc(r ? rentalTitle(r) : 'Tenant')} · ${esc(unitName(q.unit_id))} · sent ${fmtDate(new Date(q.created_at))}${q.urgency === 'urgent' ? ' · <strong>URGENT</strong>' : ''}</span>
+      ${q.details ? `<p>${esc(q.details)}</p>` : ''}
+      ${q.photo_path ? `<button type="button" class="btn" data-act="file-open" data-path="${esc(q.photo_path)}">View photo</button>` : ''}
+      ${r && r.phone ? `<div class="btns"><a class="btn" href="tel:${esc(r.phone.replace(/[^\d+]/g, ''))}">Call tenant</a><a class="btn" href="sms:${esc(r.phone.replace(/[^\d+]/g, ''))}">Text tenant</a></div>` : ''}
+    </section>
+    <section class="card">
+      ${f('rq-status', 'Status', `<select class="input" id="rq-status" name="status">${[['new', 'New'], ['scheduled', 'Scheduled'], ['done', 'Fixed'], ['closed', 'Closed']].map(([v, l]) => `<option value="${v}" ${q.status === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
+      ${f('rq-reply', 'Note for the tenant <span class="muted">(shows on their page)</span>', inp('rq-reply', 'reply', q.reply, 'placeholder="e.g. Plumber coming Tuesday 10am"'))}
+      <label class="checkrow"><input type="checkbox" name="log"> Add to upkeep history when fixed (for costs and taxes)</label>
+    </section>`, 'Delete request');
+  }
+  function requestsSection() {
+    const open = S.requests.filter((q) => q.status === 'new' || q.status === 'scheduled');
+    if (!open.length) return '';
+    return `<h2 class="section-h">Requests from tenants</h2><ul class="bills">${open.map((q) => { const r = S.rentals.find((x) => x.id === q.rental_id);
+      return `<li class="bill"><div class="bill-info">
+        <div class="row wrap" style="gap:6px"><span class="bill-name">${esc(q.title)}</span><span class="tag">${esc(unitName(q.unit_id))}</span></div>
+        <span class="small muted">${esc(r ? rentalTitle(r) : 'Tenant')} · ${fmtDay(new Date(q.created_at))}${q.photo_path ? ' · photo' : ''}</span>
+        <span class="pill ${q.urgency === 'urgent' ? 'late' : q.status === 'scheduled' ? 'up' : 'soon'}">${q.urgency === 'urgent' ? 'Urgent' : ''}${q.urgency === 'urgent' && q.status === 'scheduled' ? ' · ' : ''}${q.status === 'scheduled' ? 'Scheduled' : q.urgency === 'urgent' ? '' : 'New'}</span>
+      </div><div class="btns"><button class="btn" data-act="request" data-id="${q.id}" style="flex:1">Open</button></div></li>`; }).join('')}</ul>`;
+  }
+
+  // ----- Rent receipts (PDF) -----
+  function loadScript(src) { return new Promise((res, rej) => { if (window.jspdf) return res(); const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); }); }
+  async function makeReceipt(r, period) {
+    const rp = getRentPay(r, period);
+    if (!rp || !(Number(rp.amount_received) > 0)) return toast('No payment recorded for this month.');
+    try { await loadScript('vendor/jspdf.umd.min.js'); } catch (_) { return toast('Couldn’t load the receipt maker.'); }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+    const due = rentDue(r, rp) || 0, got = Number(rp.amount_received);
+    const no = 'R-' + period.slice(0, 7).replace('-', '') + '-' + (r.portal_token || r.id).slice(0, 4).toUpperCase();
+    const L = 64; let y = 80;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(24); doc.text('Rent receipt', L, y);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(11); doc.setTextColor(90);
+    doc.text('Receipt # ' + no, 548, y - 6, { align: 'right' }); doc.text('Issued ' + fmtDate(today()), 548, y + 10, { align: 'right' });
+    y += 40; doc.setTextColor(20);
+    const row = (k, v) => { doc.setFont('helvetica', 'normal'); doc.setTextColor(90); doc.text(k, L, y); doc.setTextColor(20); doc.setFont('helvetica', 'bold'); doc.text(String(v), L + 160, y); y += 24; };
+    row('Received from', r.tenant_name || 'Tenant');
+    row('Property', (S.household.address || S.household.name) + ' · ' + unitName(r.unit_id));
+    row('For', 'Rent for ' + monthLabel(period));
+    row('Amount received', money(got));
+    row('Date received', rp.received_at ? fmtDate(new Date(rp.received_at)) : '—');
+    row('Paid by', rp.method || '—');
+    row('Rent for the month', money(due));
+    row('Balance remaining', money(Math.max(0, due - got)));
+    y += 16; doc.setDrawColor(200); doc.line(L, y, 548, y); y += 28;
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(90); doc.setFontSize(10);
+    doc.text('Received by: ' + (S.household.name || 'Landlord') + ', landlord', L, y);
+    const blob = doc.output('blob');
+    const name = 'rent-receipt-' + (r.tenant_name || 'tenant').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + period.slice(0, 7) + '.pdf';
+    const file = new File([blob], name, { type: 'application/pdf' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: 'Rent receipt ' + monthLabel(period) }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    toast('Receipt downloaded');
+  }
+
   function vendorList() { return `<datalist id="pros-list">${S.contractors.map((c) => `<option value="${esc(c.name)}">`).join('')}</datalist>`; }
   function applianceSheet(sh) {
     const isNew = sh.type === 'new-appliance';
@@ -1024,7 +1164,7 @@ function setup() {
         <h2>${isNew ? 'New bill' : 'Bill details'}</h2>
         ${f('b-name', 'Provider / name', inp('b-name', 'name', b.name, 'required placeholder="e.g. Optimum internet"'))}
         <div class="grid2">${f('b-label', 'Label', inp('b-label', 'label', b.label, 'placeholder="Optional"'))}${f('b-acct', 'Account #', inp('b-acct', 'account_number', b.account_number, 'inputmode="numeric"'))}</div>
-        <div class="grid2">${f('b-cat', 'Category', `<select class="input" id="b-cat" name="category">${opts(CATEGORIES, b.category)}</select>`)}${f('b-unit', 'Floor', `<select class="input" id="b-unit" name="unit_id">${unitOptions(b.unit_id)}</select>`)}</div>
+        <div class="grid2">${f('b-cat', 'Category', `<select class="input" id="b-cat" name="category">${opts(CATEGORIES, b.category)}</select>`)}${f('b-unit', 'Where', `<select class="input" id="b-unit" name="unit_id">${unitOptions(b.unit_id)}</select>`)}</div>
         <div class="grid2">${f('b-day', 'Due day', inp('b-day', 'due_day', b.due_day, 'type="number" inputmode="numeric" min="1" max="31"'))}${f('b-def', 'Usual amount ($)', moneyInp('b-def', 'default_amount', b.default_amount))}</div>
         <label class="checkrow"><input type="checkbox" name="fixed" ${b.amount_type === 'fixed' ? 'checked' : ''}> Same amount every month</label>
         <label class="checkrow"><input type="checkbox" name="autopay" ${b.autopay ? 'checked' : ''}> Paid automatically (autopay)</label>
@@ -1054,16 +1194,35 @@ function setup() {
       </section>`;
     const details = `<section class="card">
         <h2>${isNew ? 'New tenant' : 'Tenant & lease'}</h2>
-        <div class="grid2">${f('r-name', 'Tenant name', inp('r-name', 'tenant_name', r.tenant_name, 'autocomplete="off"'))}${f('r-unit', 'Floor', `<select class="input" id="r-unit" name="unit_id">${unitOptions(r.unit_id)}</select>`)}</div>
+        <div class="grid2">${f('r-name', 'Tenant name', inp('r-name', 'tenant_name', r.tenant_name, 'autocomplete="off"'))}${f('r-unit', 'Unit', `<select class="input" id="r-unit" name="unit_id">${unitOptions(r.unit_id)}</select>`)}</div>
         <div class="grid2">${f('r-phone', 'Phone', inp('r-phone', 'phone', r.phone, 'type="tel" inputmode="tel" autocomplete="off"'))}${f('r-email', 'Email', inp('r-email', 'email', r.email, 'type="email" inputmode="email" autocomplete="off"'))}</div>
         <div class="grid2">${f('r-rent', 'Monthly rent ($)', moneyInp('r-rent', 'rent_amount', r.rent_amount))}${f('r-day', 'Due day', inp('r-day', 'due_day', r.due_day, 'type="number" inputmode="numeric" min="1" max="31"'))}</div>
         <div class="grid2">${f('r-grace', 'Grace days', inp('r-grace', 'grace_days', r.grace_days, 'type="number" inputmode="numeric" min="0" max="31"'))}${f('r-fee', 'Late fee ($)', moneyInp('r-fee', 'late_fee', r.late_fee))}</div>
         <div class="grid2">${f('r-start', 'Lease start', inp('r-start', 'lease_start', r.lease_start, 'type="date"'))}${f('r-end', 'Lease end', inp('r-end', 'lease_end', r.lease_end, 'type="date"'))}</div>
         ${f('r-payer', 'Also pays as <span class="muted">(other names on Zelle, comma-separated)</span>', inp('r-payer', 'payer_names', r.payer_names, 'autocomplete="off" placeholder="e.g. spouse’s name"'))}
-        ${f('r-dep', 'Security deposit ($)', moneyInp('r-dep', 'deposit', r.deposit))}
         ${f('r-notes', 'Notes', `<textarea class="input" id="r-notes" name="notes">${esc(r.notes)}</textarea>`)}
+      </section>
+      <section class="card">
+        <h2>Security deposit</h2>
+        <div class="grid2">${f('r-dep', 'Amount ($)', moneyInp('r-dep', 'deposit', r.deposit))}${f('r-deprec', 'Received on', inp('r-deprec', 'deposit_received_on', r.deposit_received_on, 'type="date"'))}</div>
+        ${f('r-dephold', 'Held at', inp('r-dephold', 'deposit_held_at', r.deposit_held_at, 'placeholder="Bank and account (NY requires a NY bank)"'))}
+        ${r.move_out_on ? `<p class="small">Moved out ${fmtDate(fromIso(r.move_out_on))}. ${r.deposit_returned_on ? 'Deposit returned ' + fmtDate(fromIso(r.deposit_returned_on)) + (r.deposit_returned_amount != null ? ' · ' + money(r.deposit_returned_amount) : '') : 'Return due by ' + fmtDate(new Date(fromIso(r.move_out_on).getTime() + 14 * 86400000)) + '.'}</p>` : ''}
       </section>`;
-    return sheetShell(isNew ? 'Add tenant' : rentalTitle(r), 'rental', month + details, isNew ? null : 'Remove tenant and rent history');
+    const tools = isNew ? '' : `<section class="card">
+        <h2>Tenant page</h2>
+        <p class="small muted">A private link where ${esc(r.tenant_name ? r.tenant_name.split(' ')[0] : 'your tenant')} can see their rent balance and send repair requests with photos. No app or password needed.</p>
+        <div class="btns">
+          <button type="button" class="btn" data-act="portal-copy" data-id="${r.id}" style="flex:1">Copy link</button>
+          ${r.phone ? `<a class="btn" style="flex:1" href="sms:${esc(r.phone.replace(/[^\d+]/g, ''))}${isIOS ? '&' : '?'}body=${encodeURIComponent('Hi' + (r.tenant_name ? ' ' + r.tenant_name.split(' ')[0] : '') + ', here’s your private page to see your rent and send repair requests: ' + portalUrl(r))}">Text link</a>` : ''}
+          <button type="button" class="btn" data-act="portal-new" data-id="${r.id}">New link</button>
+        </div>
+      </section>
+      <section class="card">
+        <h2>Lease</h2>
+        <div class="btns"><button type="button" class="btn" data-act="renew" data-id="${r.id}" style="flex:1">Renew lease</button><button type="button" class="btn" data-act="moveout" data-id="${r.id}" style="flex:1">Move-out</button><button type="button" class="btn" data-act="inspections" data-id="${r.id}" style="flex:1">Inspections</button></div>
+        ${S.leases.filter((l) => l.rental_id === r.id).map((l) => `<div class="row between small"><span>${l.lease_start ? fmtDate(fromIso(l.lease_start)) : '?'} – ${l.lease_end ? fmtDate(fromIso(l.lease_end)) : '?'}${l.tenant_name ? ' · ' + esc(l.tenant_name) : ''}</span><strong class="num">${l.rent_amount != null ? money(l.rent_amount) : ''}</strong></div>`).join('') || '<p class="small muted">Past leases appear here when you renew.</p>'}
+      </section>`;
+    return sheetShell(isNew ? 'Add tenant' : rentalTitle(r), 'rental', month + details + tools, isNew ? null : 'Remove tenant and rent history');
   }
 
   function taskSheet(sh) {
@@ -1154,6 +1313,23 @@ function setup() {
       case 'appliance': openSheet('appliance', id); break;
       case 'contractor': openSheet('contractor', id); break;
       case 'doc': openSheet('doc', id); break;
+      case 'receipt': { const r = S.rentals.find((x) => x.id === id); if (r) makeReceipt(r, S.month); break; }
+      case 'renew': openSheet('renew', id); break;
+      case 'moveout': openSheet('moveout', id); break;
+      case 'inspections': openSheet('inspections', id); break;
+      case 'request': openSheet('request', id); break;
+      case 'file-open': openFile(el.dataset.path); break;
+      case 'portal-copy': { const r = S.rentals.find((x) => x.id === id); try { await navigator.clipboard.writeText(portalUrl(r)); toast('Link copied'); } catch (_) { toast(portalUrl(r)); } break; }
+      case 'portal-new': {
+        const r = S.rentals.find((x) => x.id === id);
+        const tok = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
+        saveRental(Object.assign({}, r, { portal_token: tok })); render(); toast('New link made. The old one stops working.'); break;
+      }
+      case 'inspect-new': S.inspDraft = { id: uuid(), rental_id: id, kind: el.dataset.kind || 'Move-in', done_on: isoDate(today()), items: ROOMS.map((room) => ({ room, condition: 'Good', note: '', photos: [] })), notes: '' }; openSheet('inspection'); break;
+      case 'inspect-open': { const i = S.inspections.find((x) => x.id === id); if (i) { S.inspDraft = JSON.parse(JSON.stringify(i)); openSheet('inspection'); } break; }
+      case 'insp-cond': S.inspDraft.items[+el.dataset.i].condition = el.dataset.c; render(); break;
+      case 'insp-del': S.inspDraft.items.splice(+el.dataset.i, 1); render(); break;
+      case 'insp-add': { const n = document.getElementById('in-room'); const v = n && n.value.trim(); if (v) { S.inspDraft.items.push({ room: v, condition: 'Good', note: '', photos: [] }); render(); } break; }
       case 'doc-open': { const d = S.documents.find((x) => x.id === id); if (d && d.file_path) openFile(d.file_path); break; }
       case 'sheet-close': case 'sheet-close-bg': S.sheet = null; render(); break;
       case 'sheet-delete': {
@@ -1161,6 +1337,8 @@ function setup() {
         const t = S.sheet.type, sid = S.sheet.id;
         if (t === 'bill') deleteBill(sid); else if (t === 'rental') deleteRental(sid); else if (t === 'task') deleteTask(sid); else if (t === 'log') deleteLog(sid);
         else if (t === 'appliance') deleteRow('appliances', sid); else if (t === 'contractor') deleteRow('contractors', sid);
+        else if (t === 'inspection') { deleteRow('inspections', S.inspDraft.id); S.inspDraft = null; }
+        else if (t === 'request') deleteRow('requests', sid);
         else if (t === 'doc') { const d = S.documents.find((x) => x.id === sid); if (d && d.file_path) sb.storage.from('receipts').remove([d.file_path]); deleteRow('documents', sid); }
         S.sheet = null; S.deleteArm = false; render(); toast('Deleted'); break;
       }
@@ -1240,6 +1418,13 @@ function setup() {
       toast('Reminder time saved');
     } else if (kind === 'receipt') {
       uploadReceipt(el.files && el.files[0]);
+    } else if (kind === 'insp-meta') {
+      S.inspDraft[el.dataset.k] = el.value;
+    } else if (kind === 'insp-note') {
+      S.inspDraft.items[+el.dataset.i].note = el.value;
+    } else if (kind === 'insp-photo') {
+      const i = +el.dataset.i; const file = el.files && el.files[0];
+      if (file) uploadTo('inspections', file).then((path) => { if (path && S.inspDraft) { S.inspDraft.items[i].photos = (S.inspDraft.items[i].photos || []).concat(path); render(); toast('Photo added'); } });
     } else if (kind === 'guide-flag') {
       localFlag(el.dataset.flag, el.checked); render();
     }
@@ -1298,7 +1483,7 @@ function setup() {
       const nr = Object.assign({}, r, {
         tenant_name: val('tenant_name') || null, unit_id: val('unit_id') || null, phone: val('phone') || null, email: val('email') || null,
         rent_amount: num(val('rent_amount')), due_day: intv('due_day', 1, 31) || 1, grace_days: intv('grace_days', 0, 31) ?? 0,
-        late_fee: num(val('late_fee')), deposit: num(val('deposit')), payer_names: val('payer_names') || null, lease_start: val('lease_start') || null, lease_end: val('lease_end') || null, notes: val('notes') || null
+        late_fee: num(val('late_fee')), deposit: num(val('deposit')), payer_names: val('payer_names') || null, deposit_received_on: val('deposit_received_on') || null, deposit_held_at: val('deposit_held_at') || null, lease_start: val('lease_start') || null, lease_end: val('lease_end') || null, notes: val('notes') || null
       });
       saveRental(nr);
       if (!isNew) {
@@ -1334,6 +1519,30 @@ function setup() {
       if (!val('done_on')) return fail('Pick a date.');
       saveLog(Object.assign({}, l, { title, done_on: val('done_on'), unit_id: val('unit_id') || null, cost: num(val('cost')), vendor: val('vendor') || null, notes: val('notes') || null }));
       S.sheet = null; if (isNew) S.upkeepView = 'history'; render(); toast('Saved');
+    } else if (kind === 'renew') {
+      const r = S.rentals.find((x) => x.id === S.sheet.id);
+      if (!val('start') || !val('end')) return fail('Pick the new lease dates.');
+      if (r.lease_start || r.lease_end) saveRow('leases', { id: uuid(), household_id: S.household.id, rental_id: r.id, tenant_name: r.tenant_name, lease_start: r.lease_start, lease_end: r.lease_end, rent_amount: r.rent_amount, notes: val('notes') || null, created_at: new Date().toISOString() });
+      saveRental(Object.assign({}, r, { lease_start: val('start'), lease_end: val('end'), rent_amount: num(val('rent')) ?? r.rent_amount }));
+      S.sheet = null; render(); toast('Lease renewed to ' + fmtDate(fromIso(val('end'))));
+    } else if (kind === 'moveout') {
+      const r = S.rentals.find((x) => x.id === S.sheet.id);
+      saveRental(Object.assign({}, r, { move_out_on: val('move_out_on') || null, deposit_returned_amount: num(val('deposit_returned_amount')), deposit_returned_on: val('deposit_returned_on') || null, deposit_deductions: val('deposit_deductions') || null, active: fd.get('archive') ? false : r.active }));
+      S.sheet = null; render(); toast('Saved');
+    } else if (kind === 'inspection') {
+      const d = S.inspDraft;
+      saveRow('inspections', { id: d.id, household_id: S.household.id, rental_id: d.rental_id, unit_id: (S.rentals.find((x) => x.id === d.rental_id) || {}).unit_id || null, kind: d.kind, done_on: d.done_on || isoDate(today()), items: d.items, notes: d.notes || null, created_at: d.created_at || new Date().toISOString() });
+      S.inspections.sort((a, b) => (b.done_on || '').localeCompare(a.done_on || ''));
+      const rid = d.rental_id; S.inspDraft = null; S.sheet = { type: 'inspections', id: rid }; render(); toast('Inspection saved');
+    } else if (kind === 'request') {
+      const q = S.requests.find((x) => x.id === S.sheet.id);
+      const status = val('status') || q.status;
+      saveRow('requests', Object.assign({}, q, { status, reply: val('reply') || null, updated_at: new Date().toISOString() }));
+      if (fd.get('log') && (status === 'done' || status === 'closed')) {
+        S.sheet = { type: 'new-log' }; S.upkeepView = 'history'; render();
+        const t = document.getElementById('l-title'); if (t) t.value = q.title; const u = document.getElementById('l-unit'); if (u && q.unit_id) u.value = q.unit_id;
+        toast('Request updated. Add the cost to finish.');
+      } else { S.sheet = null; render(); toast('Request updated'); }
     } else if (kind === 'appliance') {
       const isNew = S.sheet.type === 'new-appliance';
       const a = isNew ? { id: uuid(), household_id: S.household.id, created_at: new Date().toISOString() } : S.appliances.find((x) => x.id === S.sheet.id);
@@ -1505,7 +1714,7 @@ function setup() {
   }
   function downloadCSV() {
     const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-    const rows = [['Type', 'Month / date', 'Item', 'Floor', 'Category', 'Account', 'Amount', 'Due', 'Paid / received on', 'Method', 'Confirmation / vendor', 'Note']];
+    const rows = [['Type', 'Month / date', 'Item', 'Place', 'Category', 'Account', 'Amount', 'Due', 'Paid / received on', 'Method', 'Confirmation / vendor', 'Note']];
     Object.values(S.payments).sort((a, b) => a.period.localeCompare(b.period)).forEach((p) => {
       const b = S.bills.find((x) => x.id === p.bill_id); if (!b) return;
       rows.push(['Bill', p.period.slice(0, 7), billTitle(b), unitName(b.unit_id), b.category, b.account_number, amountFor(b, p), p.due_date, p.paid_at ? isoDate(new Date(p.paid_at)) : '', p.method, p.confirmation, p.note]);
