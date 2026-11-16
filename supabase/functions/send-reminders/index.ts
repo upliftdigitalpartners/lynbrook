@@ -101,6 +101,28 @@ async function runReminders() {
       lines.push(kind === 'rent-due' ? `Rent due today from ${who} · ${money(left)}` : `Rent from ${who} is late · ${money(left)} not received`);
     }
 
+    // Leases ending in 90 / 60 / 30 days; deposit return deadline (14 days after move-out)
+    const { data: leases } = await db.from('rentals').select('id,tenant_name,lease_end,move_out_on,deposit_returned_on,deposit').eq('household_id', mem.household_id);
+    const dayIso = `${now.y}-${String(now.m).padStart(2, '0')}-${String(now.d).padStart(2, '0')}`;
+    const daysTo = (iso: string) => Math.round((Date.parse(iso + 'T00:00:00Z') - Date.parse(dayIso + 'T00:00:00Z')) / 86400000);
+    for (const r of leases ?? []) {
+      const who = r.tenant_name || 'Tenant';
+      if (r.lease_end && !r.move_out_on) {
+        const d = daysTo(r.lease_end);
+        if (d === 90 || d === 60 || d === 30) {
+          const { error } = await db.from('reminder_log').insert({ payment_key: `${r.id}:lease:${r.lease_end}:${d}`, user_id: mem.user_id });
+          if (!error) lines.push(`${who}'s lease ends in ${d} days. Renew or plan move-out.`);
+        }
+      }
+      if (r.move_out_on && !r.deposit_returned_on) {
+        const left = 14 - (-daysTo(r.move_out_on));
+        if (left === 4 || left === 1 || left === 0) {
+          const { error } = await db.from('reminder_log').insert({ payment_key: `${r.id}:deposit:${r.move_out_on}:${left}`, user_id: mem.user_id });
+          if (!error) lines.push(left === 0 ? `Last day to return ${who}'s deposit (NY 14-day rule)` : `Return ${who}'s deposit within ${left} day${left === 1 ? '' : 's'} (NY 14-day rule)`);
+        }
+      }
+    }
+
     // Upkeep: remind_days before, and on the day it's due
     const todayIso = `${now.y}-${String(now.m).padStart(2, '0')}-${String(now.d).padStart(2, '0')}`;
     const { data: tasks } = await db.from('maintenance_tasks').select('id,title,next_due').eq('household_id', mem.household_id).eq('active', true).not('next_due', 'is', null);
