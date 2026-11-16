@@ -14,6 +14,7 @@ A rent, bill and home-upkeep tracker for a two-family house, built as an install
 - Upkeep: recurring maintenance tasks that reschedule themselves when marked done, one-off repair log with costs and contractors
 - Summary: rent in vs. bills + upkeep out, net per month, bills by floor and category
 - Push reminders for bills, late rent and upcoming upkeep
+- Gmail bill import: a Google Apps Script (copied from Settings) sends PSEG, National Grid and Liberty emails to the `import-bill` function, which fills in amounts and due dates and marks bills paid from payment confirmations
 - Add all due dates to your phone calendar (.ics) and export history (CSV)
 - Works offline: changes made offline sync when you’re back online
 - Installs to the Home Screen on iPhone and Android
@@ -33,6 +34,7 @@ behind row-level security: only signed-in members of a household can read or cha
 | `vendor/` | Supabase JS client (v2.45.4), bundled so the app works offline |
 | `supabase/migrations/` | Database schema and security rules (`001` bills, `002` rent & upkeep) |
 | `supabase/functions/send-reminders/` | Edge function that sends reminders; run hourly by `pg_cron` |
+| `supabase/functions/import-bill/` | Edge function that reads utility emails (`parse.ts`) and updates bills |
 
 ## Getting in
 The family shares one **house password**. Open the app and enter it; each device stays signed in.

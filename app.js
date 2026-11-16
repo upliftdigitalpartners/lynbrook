@@ -18,7 +18,7 @@
     view: 'loading', // loading | auth | recovery | join | app
     authErr: '', joinErr: '',
     user: null, household: null, member: null, units: [], bills: [], payments: {},
-    rentals: [], rentPays: {}, tasks: [], logs: [],
+    rentals: [], rentPays: {}, tasks: [], logs: [], imports: [],
     tab: 'bills', month: monthKey(new Date()), unit: 'all', filter: 'all', upkeepView: 'upcoming',
     editing: null, sheet: null, sheetErr: '', deleteArm: false,
     online: navigator.onLine, pending: 0, pushState: 'unknown', installEvt: null, busy: false
@@ -95,7 +95,7 @@
   // ---------- local cache + offline outbox ----------
   const cacheKey = () => 'eh-cache-' + (S.user ? S.user.id : 'anon');
   const OUTBOX = 'eh-outbox';
-  const CACHED = ['household', 'member', 'units', 'bills', 'payments', 'rentals', 'rentPays', 'tasks', 'logs'];
+  const CACHED = ['household', 'member', 'units', 'bills', 'payments', 'rentals', 'rentPays', 'tasks', 'logs', 'imports'];
   function saveCache() {
     try { const o = {}; CACHED.forEach((k) => { o[k] = S[k]; }); localStorage.setItem(cacheKey(), JSON.stringify(o)); } catch (_) {}
   }
@@ -158,12 +158,13 @@
         sb.from('rentals').select('*').eq('household_id', hid).order('created_at'),
         sb.from('rent_payments').select('*').eq('household_id', hid).gte('period', since),
         sb.from('maintenance_tasks').select('*').eq('household_id', hid).order('created_at'),
-        sb.from('maintenance_log').select('*').eq('household_id', hid).order('done_on', { ascending: false }).limit(500)
+        sb.from('maintenance_log').select('*').eq('household_id', hid).order('done_on', { ascending: false }).limit(500),
+        sb.from('email_imports').select('*').eq('household_id', hid).order('created_at', { ascending: false }).limit(15)
       ]);
       res.forEach((r) => { if (r.error) throw r.error; });
-      const [u, b, p, r, rp, t, l] = res.map((x) => x.data);
+      const [u, b, p, r, rp, t, l, im] = res.map((x) => x.data);
       S.household = m.households; delete m.households; S.member = m;
-      S.units = u; S.bills = b; S.rentals = r; S.tasks = t; S.logs = l;
+      S.units = u; S.bills = b; S.rentals = r; S.tasks = t; S.logs = l; S.imports = im;
       S.payments = {}; p.forEach((x) => { S.payments[payKey(x.bill_id, x.period)] = x; });
       S.rentPays = {}; rp.forEach((x) => { S.rentPays[payKey(x.rental_id, x.period)] = x; });
       saveCache();
@@ -178,6 +179,7 @@
 
   function upsertLocal(list, row) { const i = list.findIndex((x) => x.id === row.id); if (i >= 0) list[i] = row; else list.push(row); }
   function savePayment(b, period, fields) {
+    if ('amount' in fields && !('source' in fields)) fields = Object.assign({ source: 'manual' }, fields);
     const existing = getPay(b, period);
     const d = dueOn(b.due_day, period);
     const row = Object.assign({
@@ -439,7 +441,7 @@
             <button class="btn" data-act="bill" data-id="${b.id}" style="flex:1">Details</button>
           </div>
         </div>` : `<div class="bill-sum">
-          <div class="stack" style="gap:0"><span class="amt display num">${money(r.amt)}</span><span class="small muted">${r.due ? 'Due ' + fmtDay(r.due) : ''}${b.autopay ? ' · Autopay' : ''}</span></div>
+          <div class="stack" style="gap:0"><span class="amt display num">${money(r.amt)}</span><span class="small muted">${r.due ? 'Due ' + fmtDay(r.due) : ''}${b.autopay ? ' · Autopay' : ''}${r.pay && r.pay.source === 'email' ? ' · from email' : ''}</span></div>
           <div class="btns">
             ${b.pay_url && !paid ? `<a class="btn" href="${esc(b.pay_url)}" target="_blank" rel="noopener">Pay ${ICON.ext}</a>` : ''}
             <button class="btn" data-act="edit" data-id="${b.id}" aria-label="Edit ${esc(billTitle(b))}">Edit</button>
@@ -639,6 +641,7 @@
         </form>
         <p class="small muted">Bills: before the due date, on the day, and the day after if unpaid (autopay bills are skipped). Rent: on the due day and when the grace period ends. Upkeep: before and on the due date.</p>
       </section>
+      ${importCard()}
       <section class="card" aria-label="Install">
         <h2>Install on your phone</h2>
         ${install}
@@ -672,7 +675,65 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v1.2</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v1.3</p>`;
+  }
+
+  function importCard() {
+    const last = S.imports[0];
+    const label = { applied: 'Added', kept_manual: 'Kept yours', already_paid: 'Already paid', unmatched: 'Needs a look', ignored: 'Skipped' };
+    const cls = { applied: 'paid', kept_manual: 'up', already_paid: 'up', unmatched: 'setup', ignored: 'up' };
+    const rows = S.imports.filter((x) => x.status !== 'ignored').slice(0, 8);
+    return `<section class="card" aria-label="Email bill import">
+      <h2>Import bills from Gmail</h2>
+      ${last ? `<p class="ok">Working · last email ${fmtDay(new Date(last.created_at))}</p>` : '<p class="small muted">Not set up yet. Takes about 2 minutes, in the Gmail account that gets your PSEG, National Grid and Liberty emails.</p>'}
+      <ol class="steps small">
+        <li>On a computer, signed in to <strong>that</strong> Gmail, open <a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener">script.google.com → New project</a>.</li>
+        <li>Delete what’s there, then paste the setup script: <button class="btn" data-act="copy-script" style="height:36px;margin-top:6px">Copy setup script</button></li>
+        <li>Click <strong>Save</strong> (the disk icon), choose <strong>setup</strong> in the function menu, click <strong>Run</strong>, and allow access.</li>
+      </ol>
+      <p class="small muted">It checks for new utility emails every 4 hours. It never changes amounts you typed or bills already marked paid. Only you can see the script; it only reads emails from those three companies.</p>
+      ${rows.length ? `<div class="stack" style="gap:8px">${rows.map((x) => { const b = S.bills.find((y) => y.id === x.bill_id); return `<div class="row between small" style="align-items:flex-start;gap:8px"><div class="stack" style="gap:0;min-width:0"><span>${esc(b ? billTitle(b) : (x.provider || 'Email'))}</span><span class="muted">${esc(x.detail || x.subject || '')}</span></div><span class="pill ${cls[x.status] || 'up'}" style="margin:0;flex:none">${label[x.status] || esc(x.status)}</span></div>`; }).join('')}</div>` : ''}
+      <button class="btn" data-act="rotate-import">Make a new key (stops the old script)</button>
+    </section>`;
+  }
+  function importScript() {
+    const url = CFG.SUPABASE_URL + '/functions/v1/import-bill';
+    return `// Evergreen House — Gmail bill import
+// Sends new PSEG, National Grid and Liberty emails to your Evergreen House app.
+// Run "setup" once. After that it runs by itself every 4 hours.
+
+const ENDPOINT = '${url}';
+const KEY = '${S.household.import_token}';
+const QUERY = 'from:(pseg OR psegliny OR nationalgrid OR "national grid" OR libertyutilities OR libertyenergyandwater OR "liberty utilities") newer_than:45d';
+
+function importBills() {
+  const threads = GmailApp.search(QUERY, 0, 40);
+  const messages = [];
+  threads.forEach(function (t) {
+    t.getMessages().forEach(function (m) {
+      messages.push({ id: m.getId(), from: m.getFrom(), subject: m.getSubject(), date: m.getDate().toISOString(), text: m.getPlainBody().slice(0, 60000) });
+    });
+  });
+  for (let i = 0; i < messages.length; i += 20) {
+    const res = UrlFetchApp.fetch(ENDPOINT, {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: { 'x-import-token': KEY },
+      payload: JSON.stringify({ messages: messages.slice(i, i + 20) })
+    });
+    if (res.getResponseCode() !== 200) throw new Error('Import failed: ' + res.getResponseCode() + ' ' + res.getContentText());
+  }
+  console.log('Checked ' + messages.length + ' emails');
+}
+
+function setup() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'importBills') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('importBills').timeBased().everyHours(4).create();
+  importBills();
+  console.log('All set. Bills will import every 4 hours.');
+}
+`;
   }
 
   // ---------- sheets ----------
@@ -865,6 +926,16 @@
       case 'push-test': await testPush(); break;
       case 'install': if (S.installEvt) { S.installEvt.prompt(); S.installEvt = null; render(); } break;
       case 'ics': downloadICS(); break;
+      case 'copy-script':
+        if (!S.household.import_token) { toast('Refresh first, then try again.'); break; }
+        try { await navigator.clipboard.writeText(importScript()); toast('Setup script copied'); }
+        catch (_) { download('evergreen-gmail-import.gs', importScript(), 'text/plain'); }
+        break;
+      case 'rotate-import': {
+        const r = await sb.rpc('rotate_import_token', { h: S.household.id });
+        if (r.error) toast(r.error.message); else { S.household.import_token = r.data; saveCache(); render(); toast('New key made. Copy the script again and replace the old one.'); }
+        break;
+      }
       case 'csv': downloadCSV(); break;
     }
   }
