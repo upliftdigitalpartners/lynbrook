@@ -408,7 +408,7 @@
       .map(([id, l]) => `<button class="chip" data-act="unit" data-unit="${esc(id)}" aria-pressed="${S.unit === id}">${esc(l)}</button>`).join('');
     const filt = [['all', 'All ' + md.rows.length], ['unpaid', 'Unpaid ' + unpaid], ['paid', 'Paid ' + (md.rows.length - unpaid)]]
       .map(([id, l]) => `<button data-act="filter" data-filter="${id}" aria-pressed="${S.filter === id}">${l}</button>`).join('');
-    return `${monthNav()}
+    return `${setupBanner()}${monthNav()}
       ${hero('Bills still to pay', money(md.total - md.paid), pct, money(md.paid) + ' of ' + money(md.total) + ' paid', md.overdue ? md.overdue + ' overdue · ' + money(md.overdueAmt) : 'None overdue', md.overdue)}
       ${md.setup ? `<p class="notice">${md.setup} ${md.setup === 1 ? 'bill needs' : 'bills need'} an amount or due day for ${monthLabel(S.month, true)}. Fill them in on the card.</p>` : ''}
       <div class="chips" role="group" aria-label="Show floor">${unitChips}</div>
@@ -651,6 +651,7 @@
       : S.installEvt ? '<button class="btn primary block" data-act="install">Install app</button>'
       : '<p class="small muted">In Chrome, open the ⋮ menu and choose <strong>Install app</strong> or <strong>Add to Home screen</strong>.</p>';
     return `
+      ${guideCard()}
       <section class="card" aria-label="Reminders">
         <h2>Reminders</h2>
         ${push}
@@ -694,7 +695,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v1.4</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v1.5</p>`;
   }
 
   function importCard() {
@@ -754,6 +755,69 @@ function setup() {
   console.log('All set. Bills will import every 4 hours.');
 }
 `;
+  }
+
+  // ---------- setup guide ----------
+  function localFlag(k, v) { try { if (v === undefined) return localStorage.getItem('eh-' + k) === '1'; localStorage.setItem('eh-' + k, v ? '1' : '0'); } catch (_) { return false; } }
+  function setupSteps() {
+    const rentals = S.rentals.filter((r) => r.active !== false);
+    const mort = S.bills.find((b) => b.active !== false && b.category === 'Mortgage');
+    const tasks = S.tasks.filter((t) => t.active !== false);
+    const anyImport = S.imports.length > 0;
+    const anyZelle = S.imports.some((x) => x.kind === 'zelle');
+    const scriptUrl = 'https://script.google.com/home/projects/create';
+    return [
+      { id: 'install', title: 'Add the app to your Home Screen', done: isStandalone(),
+        body: isIOS
+          ? '<ol class="steps"><li>Open this site in <strong>Safari</strong>.</li><li>Tap <strong>Share</strong> (the square with an arrow).</li><li>Tap <strong>Add to Home Screen</strong> → <strong>Add</strong>.</li><li>From now on, open Evergreen from its icon. Reminders only work from the icon.</li></ol>'
+          : '<ol class="steps"><li>In Chrome, open the <strong>⋮</strong> menu.</li><li>Tap <strong>Install app</strong> or <strong>Add to Home screen</strong>.</li></ol>' + (S.installEvt ? '<button class="btn primary block" data-act="install">Install now</button>' : '') },
+      { id: 'push', title: 'Turn on reminders', done: S.pushState === 'on',
+        body: '<ol class="steps"><li>Open the app from its Home Screen icon.</li><li>Below, under <strong>Reminders</strong>, tap <strong>Turn on reminders</strong> and allow notifications.</li><li>Tap <strong>Send a test</strong>. A notification should pop up.</li><li>Choose how many days ahead and what time.</li></ol><p class="small muted">Do this on each family member’s phone.</p>' },
+      { id: 'password', title: 'Change the family password', done: localFlag('pw-changed'), manual: true,
+        body: '<ol class="steps"><li>Scroll down to <strong>Family password</strong>.</li><li>Type a new password twice and tap <strong>Change password</strong>.</li><li>Share it with your family. Phones already signed in stay signed in.</li></ol>' },
+      { id: 'tenants', title: 'Add your tenants and rent', done: rentals.length > 0 && rentals.every((r) => r.tenant_name && r.rent_amount != null),
+        body: '<ol class="steps"><li>Go to the <strong>Rent</strong> tab.</li><li>Tap <strong>Details</strong> on each floor.</li><li>Enter the tenant’s name, phone, monthly rent, due day, grace days and late fee.</li><li>If someone pays from another person’s Zelle (a spouse, a parent), add that name under <strong>Also pays as</strong>.</li><li>Optional: lease start/end and security deposit. You’ll get a heads-up 60 days before a lease ends.</li></ol><button class="btn block" data-act="go" data-tab="rent">Open Rent</button>' },
+      { id: 'mortgage', title: 'Set your mortgage payment', done: !!(mort && mort.default_amount != null && mort.due_day),
+        body: '<ol class="steps"><li>Go to <strong>Rent</strong> → <strong>Mortgage</strong> → <strong>Details</strong> (or find Rocket Mortgage on the Bills tab).</li><li>Enter the monthly payment under <strong>Usual amount</strong> and the <strong>Due day</strong>.</li><li>Tick <strong>Same amount every month</strong>. Tick <strong>autopay</strong> if Rocket pulls it automatically.</li><li>Add your loan number under <strong>Account #</strong>.</li></ol>' + (mort ? `<button class="btn block" data-act="bill" data-id="${mort.id}">Open mortgage details</button>` : '') },
+      { id: 'chase', title: 'Turn on Chase Zelle email alerts', done: anyZelle || localFlag('chase-alerts'), manual: !anyZelle,
+        body: '<ol class="steps"><li>Open the <strong>Chase</strong> app.</li><li>Tap your <strong>profile</strong> icon → <strong>Settings</strong> → <strong>Alerts</strong>.</li><li>Find <strong>Zelle®</strong> and turn on <strong>“You received money”</strong> (or “Payment received”) as an <strong>email</strong> alert.</li><li>Make sure the email goes to the same Gmail you use for the import (next step).</li></ol><p class="small muted">Menu names can differ slightly between app versions.</p>' },
+      { id: 'gmail', title: 'Install the Gmail import', done: anyImport,
+        body: `<p class="small muted">This fills in PSEG, National Grid, Liberty and Rocket Mortgage bills and records Zelle rent by itself. Do this on a computer, signed in to the Gmail that gets those emails.</p>
+          <ol class="steps"><li>Tap <button class="btn" data-act="copy-script" style="height:36px">Copy setup script</button></li>
+          <li>Open <a href="${scriptUrl}" target="_blank" rel="noopener">script.google.com → New project</a>.</li>
+          <li>Select everything in the editor, delete it, and paste.</li>
+          <li>Click <strong>Save</strong> (the disk icon).</li>
+          <li>In the function menu at the top, choose <strong>setup</strong>, then click <strong>Run</strong>.</li>
+          <li>Google asks for permission: choose your account → <strong>Advanced</strong> → <strong>Go to project (unsafe)</strong> → <strong>Allow</strong>. “Unsafe” only means Google hasn’t reviewed your own private script.</li>
+          <li>Done. It checks every 4 hours. Results show under <strong>Import bills &amp; Zelle rent</strong> below.</li></ol>
+          <p class="small muted">Already installed an older copy? Copy it again and replace the old one: new versions add Rocket Mortgage and Zelle.</p>` },
+      { id: 'upkeep', title: 'Schedule your upkeep', done: tasks.length > 0 && tasks.every((t) => t.next_due),
+        body: '<ol class="steps"><li>Go to the <strong>Upkeep</strong> tab.</li><li>For each task under <strong>Not scheduled yet</strong>, tap <strong>Done</strong> and enter roughly when it was last done. The app works out the next date.</li><li>Delete tasks that don’t apply (Edit → Delete) and add your own with <strong>+</strong>.</li></ol><button class="btn block" data-act="go" data-tab="upkeep">Open Upkeep</button>' }
+    ];
+  }
+  function guideCard() {
+    const steps = setupSteps();
+    const n = steps.filter((x) => x.done).length;
+    const all = n === steps.length;
+    return `<section class="card" aria-label="Setup guide" id="guide">
+      <div class="row between"><h2>Setup guide</h2><span class="small muted">${n} of ${steps.length} done</span></div>
+      <div class="meter" role="progressbar" aria-label="Setup progress" aria-valuemin="0" aria-valuemax="${steps.length}" aria-valuenow="${n}"><div style="width:${Math.round((n / steps.length) * 100)}%"></div></div>
+      ${all ? '<p class="ok">All set. Everything runs on its own now.</p>' : ''}
+      <div class="guide">
+        ${steps.map((x, i) => `<details class="gstep ${x.done ? 'done' : ''}" ${!x.done && steps.findIndex((y) => !y.done) === i ? 'open' : ''}>
+          <summary><span class="gnum" aria-hidden="true">${x.done ? ICON.check : i + 1}</span><span class="gtitle">${esc(x.title)}</span><span class="sr">${x.done ? '(done)' : '(to do)'}</span></summary>
+          <div class="gbody">${x.body}
+            ${x.manual ? `<label class="checkrow"><input type="checkbox" data-change="guide-flag" data-flag="${x.id === 'password' ? 'pw-changed' : 'chase-alerts'}" ${x.done ? 'checked' : ''}> I’ve done this</label>` : ''}
+          </div>
+        </details>`).join('')}
+      </div>
+    </section>`;
+  }
+  function setupBanner() {
+    const steps = setupSteps();
+    const n = steps.filter((x) => x.done).length;
+    if (n === steps.length) return '';
+    return `<button class="notice info banner" data-act="go" data-tab="settings" data-anchor="guide">Finish setting up · ${n} of ${steps.length} done <span aria-hidden="true">›</span></button>`;
   }
 
   // ---------- sheets ----------
@@ -895,6 +959,11 @@ function setup() {
     const id = el.dataset.id;
     switch (act) {
       case 'tab': S.tab = el.dataset.tab; window.scrollTo(0, 0); render(); break;
+      case 'go': {
+        S.tab = el.dataset.tab; S.sheet = null; window.scrollTo(0, 0); render();
+        const a = el.dataset.anchor && document.getElementById(el.dataset.anchor); if (a) a.scrollIntoView({ block: 'start' });
+        break;
+      }
       case 'month': S.month = addMonths(S.month, Number(el.dataset.delta)); S.editing = null; render(); break;
       case 'month-today': S.month = monthKey(new Date()); render(); break;
       case 'unit': S.unit = el.dataset.unit; render(); break;
@@ -1008,6 +1077,8 @@ function setup() {
       toast('Reminder time saved');
     } else if (kind === 'receipt') {
       uploadReceipt(el.files && el.files[0]);
+    } else if (kind === 'guide-flag') {
+      localFlag(el.dataset.flag, el.checked); render();
     }
   }
 
@@ -1105,7 +1176,7 @@ function setup() {
       if (p1 !== p2) return toast('The two passwords don’t match.');
       const r = await sb.auth.updateUser({ password: p1 });
       if (r.error) return toast('Couldn’t change it: ' + r.error.message);
-      form.reset(); toast('Password changed. Share the new one with your family.');
+      form.reset(); localFlag('pw-changed', true); render(); toast('Password changed. Share the new one with your family.');
     } else if (kind === 'house') {
       const fields = { name: val('name') || 'My house', address: val('address') || null };
       Object.assign(S.household, fields);
