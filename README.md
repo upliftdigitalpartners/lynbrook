@@ -33,9 +33,9 @@ behind row-level security: only signed-in members of a household can read or cha
 | `supabase/functions/send-reminders/` | Edge function that sends reminders; run hourly by `pg_cron` |
 
 ## Getting in
-1. Open the app and **Create an account**, then confirm your email from the link Supabase sends.
-2. Sign in and enter the **house code** (the first person to join becomes the owner).
-3. The owner can share or change the house code under **Settings → House**.
+The family shares one **house password**. Open the app and enter it; each device stays signed in.
+Change it under **Settings → Family password**. Behind the scenes it signs in to one shared
+Supabase account (`HOUSE_EMAIL` in `config.js`); new sign-ups are turned off in Supabase.
 
 ## Changing the app
 Edit the files and push. GitHub Pages redeploys automatically.

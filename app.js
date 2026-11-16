@@ -226,21 +226,15 @@
   }
 
   function authView() {
-    const signup = S.authMode === 'signup';
-    const forgot = S.authMode === 'forgot';
     return `<div class="auth"><form class="card" data-form="auth" novalidate>
       <img class="logo" src="icons/icon-192.png" alt="">
       <div><h1 class="display" style="margin:0;font-size:26px">Evergreen House</h1>
-      <p class="muted">${forgot ? 'We’ll email you a link to set a new password.' : signup ? 'Create your account. You’ll confirm your email once.' : 'Sign in to your house bills.'}</p></div>
-      <div class="field"><label for="a-email">Email</label><input class="input" id="a-email" name="email" type="email" autocomplete="email" inputmode="email" required></div>
-      ${forgot ? '' : `<div class="field"><label for="a-pass">Password</label><input class="input" id="a-pass" name="password" type="password" minlength="8" autocomplete="${signup ? 'new-password' : 'current-password'}" required>${signup ? '<span class="small muted">At least 8 characters.</span>' : ''}</div>`}
+      <p class="muted">Enter the house password to open your bills.</p></div>
+      <input type="text" name="username" value="${esc(CFG.HOUSE_EMAIL)}" autocomplete="username" class="sr" tabindex="-1" aria-hidden="true" readonly>
+      <div class="field"><label for="a-pass">House password</label><input class="input" id="a-pass" name="password" type="password" autocomplete="current-password" autocapitalize="off" spellcheck="false" required></div>
       ${S.authErr ? `<p class="err" role="alert">${esc(S.authErr)}</p>` : ''}
-      ${S.authMsg ? `<p class="ok" role="status">${esc(S.authMsg)}</p>` : ''}
-      <button class="btn primary block" type="submit" ${S.busy ? 'disabled' : ''}>${forgot ? 'Send reset link' : signup ? 'Create account' : 'Sign in'}</button>
-      <div class="row between wrap">
-        <button type="button" class="linkbtn" data-act="auth-mode" data-mode="${signup ? 'signin' : 'signup'}">${signup ? 'I have an account' : 'Create an account'}</button>
-        ${forgot ? '<button type="button" class="linkbtn" data-act="auth-mode" data-mode="signin">Back to sign in</button>' : signup ? '' : '<button type="button" class="linkbtn" data-act="auth-mode" data-mode="forgot">Forgot password?</button>'}
-      </div>
+      <button class="btn primary block" type="submit" ${S.busy ? 'disabled' : ''}>Open</button>
+      <p class="small muted">You stay signed in on this device. Ask a family member for the password if you don’t have it.</p>
     </form></div>`;
   }
 
@@ -428,7 +422,6 @@
 
   function settingsTab() {
     const m = S.member || {};
-    const owner = m.role === 'owner';
     const hours = Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${h === m.remind_hour ? 'selected' : ''}>${((h + 11) % 12) + 1}:00 ${h < 12 ? 'AM' : 'PM'}</option>`).join('');
     const days = [0, 1, 2, 3, 4, 5, 7].map((d) => `<option value="${d}" ${d === m.remind_days ? 'selected' : ''}>${d === 0 ? 'Only on the due day' : d + (d === 1 ? ' day' : ' days') + ' before'}</option>`).join('');
     let push;
@@ -474,17 +467,23 @@
           <div class="field"><label for="h-addr">Address</label><input class="input" id="h-addr" name="address" value="${esc(S.household && S.household.address)}"></div>
           <button class="btn" type="submit">Save house details</button>
         </form>
-        ${owner ? `<div class="stack" style="gap:6px"><span class="lab small muted" style="font-weight:600">House code — share it to let someone else join</span>
-          <div class="row between wrap"><span class="code">${esc(S.household && S.household.claim_code)}</span>
-          <div class="btns"><button class="btn" data-act="copy" data-text="${esc(S.household && S.household.claim_code)}">Copy</button><button class="btn" data-act="rotate">New code</button></div></div></div>` : ''}
       </section>
-      <section class="card" aria-label="Account">
-        <h2>Account</h2>
-        <p class="small muted">Signed in as ${esc(S.user && S.user.email)}</p>
+      <section class="card" aria-label="Family password">
+        <h2>Family password</h2>
+        <p class="small muted">Everyone in the family uses the same password. If you change it, phones that are already signed in stay signed in.</p>
+        <form class="stack" data-form="password">
+          <input type="text" name="username" value="${esc(CFG.HOUSE_EMAIL)}" autocomplete="username" class="sr" tabindex="-1" aria-hidden="true" readonly>
+          <div class="field"><label for="pw1">New password</label><input class="input" id="pw1" name="p1" type="password" minlength="8" autocomplete="new-password" autocapitalize="off"></div>
+          <div class="field"><label for="pw2">Type it again</label><input class="input" id="pw2" name="p2" type="password" minlength="8" autocomplete="new-password" autocapitalize="off"></div>
+          <button class="btn" type="submit">Change password</button>
+        </form>
+      </section>
+      <section class="card" aria-label="This device">
+        <h2>This device</h2>
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v1.0</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v1.1</p>`;
   }
 
   function sheetView() {
@@ -628,26 +627,13 @@
     const fd = new FormData(form);
     const val = (k) => String(fd.get(k) || '').trim();
     if (kind === 'auth') {
-      const email = val('email'), password = String(fd.get('password') || '');
-      S.authErr = ''; S.authMsg = '';
-      if (!email) { S.authErr = 'Enter your email.'; return render(); }
+      const password = String(fd.get('password') || '');
+      S.authErr = '';
+      if (!password) { S.authErr = 'Enter the house password.'; return render(); }
       S.busy = true; render();
-      let r;
-      if (S.authMode === 'forgot') {
-        r = await sb.auth.resetPasswordForEmail(email, { redirectTo: CFG.APP_URL });
-        S.busy = false;
-        if (r.error) S.authErr = r.error.message; else S.authMsg = 'Check your email for a reset link.';
-      } else if (S.authMode === 'signup') {
-        if (password.length < 8) { S.busy = false; S.authErr = 'Use at least 8 characters.'; return render(); }
-        r = await sb.auth.signUp({ email, password, options: { emailRedirectTo: CFG.APP_URL } });
-        S.busy = false;
-        if (r.error) S.authErr = r.error.message;
-        else if (!r.data.session) { S.authMode = 'signin'; S.authMsg = 'Almost done: open the email we sent and tap the confirm link, then sign in here.'; }
-      } else {
-        r = await sb.auth.signInWithPassword({ email, password });
-        S.busy = false;
-        if (r.error) S.authErr = /confirm/i.test(r.error.message) ? 'Confirm your email first — check your inbox for the link.' : r.error.message;
-      }
+      const r = await sb.auth.signInWithPassword({ email: CFG.HOUSE_EMAIL, password });
+      S.busy = false;
+      if (r.error) S.authErr = /invalid/i.test(r.error.message) ? 'That password isn’t right.' : r.error.message;
       render();
     } else if (kind === 'recovery') {
       const password = String(fd.get('password') || '');
@@ -700,6 +686,13 @@
       }
       savePayment(nb, S.month, { amount: num(val('p_amount')), paid_at: paidAt, method: val('p_method') || null, confirmation: val('p_confirmation') || null, note: val('p_note') || null });
       S.sheet = null; render(); toast('Saved');
+    } else if (kind === 'password') {
+      const p1 = String(fd.get('p1') || ''), p2 = String(fd.get('p2') || '');
+      if (p1.length < 8) return toast('Use at least 8 characters.');
+      if (p1 !== p2) return toast('The two passwords don’t match.');
+      const r = await sb.auth.updateUser({ password: p1 });
+      if (r.error) return toast('Couldn’t change it: ' + r.error.message);
+      form.reset(); toast('Password changed. Share the new one with your family.');
     } else if (kind === 'house') {
       const fields = { name: val('name') || 'My house', address: val('address') || null };
       Object.assign(S.household, fields);
