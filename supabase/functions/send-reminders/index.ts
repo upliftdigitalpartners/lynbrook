@@ -1,0 +1,106 @@
+// Sends bill reminders as Web Push notifications.
+// Called hourly by pg_cron (x-cron-secret header) and by the app's "Send test" button (user JWT).
+import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
+import webpush from 'npm:web-push@3.6.7';
+
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const CRON_SECRET = Deno.env.get('CRON_SECRET') ?? '';
+const VAPID_PUBLIC = Deno.env.get('VAPID_PUBLIC_KEY')!;
+const VAPID_PRIVATE = Deno.env.get('VAPID_PRIVATE_KEY')!;
+const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') ?? 'mailto:reminders@example.com';
+
+webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE);
+const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+
+const cors = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+type Sub = { id: string; endpoint: string; p256dh: string; auth: string };
+
+async function push(userId: string, payload: Record<string, unknown>) {
+  const { data: subs } = await db.from('push_subscriptions').select('id,endpoint,p256dh,auth').eq('user_id', userId);
+  let sent = 0;
+  for (const s of (subs ?? []) as Sub[]) {
+    try {
+      await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify(payload), { TTL: 60 * 60 * 12 });
+      sent++;
+    } catch (e) {
+      const code = (e as { statusCode?: number }).statusCode;
+      if (code === 404 || code === 410) await db.from('push_subscriptions').delete().eq('id', s.id);
+      else console.error('push failed', code, (e as Error).message);
+    }
+  }
+  return sent;
+}
+
+function localParts(tz: string, d = new Date()) {
+  const f = new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' });
+  const p = Object.fromEntries(f.formatToParts(d).map((x) => [x.type, x.value]));
+  return { y: +p.year, m: +p.month, d: +p.day, h: +p.hour };
+}
+
+const money = (n: number) => '$' + n.toFixed(2);
+
+async function runReminders() {
+  const { data: members } = await db.from('household_members').select('household_id,user_id,remind_days,remind_hour,timezone');
+  let total = 0;
+  for (const mem of members ?? []) {
+    const now = localParts(mem.timezone);
+    if (now.h !== mem.remind_hour) continue;
+    const period = `${now.y}-${String(now.m).padStart(2, '0')}-01`;
+    const daysInMonth = new Date(Date.UTC(now.y, now.m, 0)).getUTCDate();
+    const { data: bills } = await db.from('bills').select('id,name,label,due_day,default_amount,amount_type,autopay').eq('household_id', mem.household_id).eq('active', true);
+    const { data: pays } = await db.from('payments').select('bill_id,amount,paid_at').eq('household_id', mem.household_id).eq('period', period);
+    const payBy = new Map((pays ?? []).map((p) => [p.bill_id, p]));
+    const lines: string[] = [];
+    for (const b of bills ?? []) {
+      if (!b.due_day || b.autopay) continue;
+      const pay = payBy.get(b.id);
+      if (pay?.paid_at) continue;
+      const due = Math.min(b.due_day, daysInMonth);
+      const diff = due - now.d;
+      let kind = '';
+      if (diff === mem.remind_days && diff > 0) kind = 'soon';
+      else if (diff === 0) kind = 'today';
+      else if (diff === -1) kind = 'overdue';
+      if (!kind) continue;
+      const key = `${b.id}:${period}:${kind}`;
+      const { error } = await db.from('reminder_log').insert({ payment_key: key, user_id: mem.user_id });
+      if (error) continue; // already sent
+      const amt = pay?.amount ?? (b.amount_type === 'fixed' ? b.default_amount : null);
+      const name = b.label ? `${b.name} (${b.label})` : b.name;
+      const when = kind === 'soon' ? `due in ${diff} day${diff === 1 ? '' : 's'}` : kind === 'today' ? 'due today' : 'was due yesterday';
+      lines.push(`${name} ${when}${amt ? ' · ' + money(Number(amt)) : ''}`);
+    }
+    if (!lines.length) continue;
+    total += await push(mem.user_id, {
+      title: lines.length === 1 ? 'Bill reminder' : `${lines.length} bills need attention`,
+      body: lines.join('\n'),
+      tag: `bills-${period}-${now.d}`,
+      url: './',
+    });
+  }
+  return total;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+  try {
+    if (CRON_SECRET && req.headers.get('x-cron-secret') === CRON_SECRET) {
+      const sent = await runReminders();
+      return Response.json({ ok: true, sent }, { headers: cors });
+    }
+    const token = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
+    const { data } = await db.auth.getUser(token);
+    if (!data?.user) return Response.json({ error: 'unauthorized' }, { status: 401, headers: cors });
+    const sent = await push(data.user.id, { title: 'Evergreen House', body: 'Notifications are working. You will get bill reminders here.', tag: 'test', url: './' });
+    return Response.json({ ok: true, sent }, { headers: cors });
+  } catch (e) {
+    console.error(e);
+    return Response.json({ error: (e as Error).message }, { status: 500, headers: cors });
+  }
+});
