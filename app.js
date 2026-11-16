@@ -369,6 +369,44 @@
     if (b) openSheet('bill', b.id); else openSheet('new-bill');
     toast(b ? 'Matched ' + billTitle(b) + '. Check and save.' : 'New bill. Check the details and save.');
   }
+  function spark(b) {
+    if (b.amount_type === 'fixed' || b.category === 'Mortgage') return '';
+    const v = []; for (let i = 5; i >= 0; i--) { const p = getPay(b, addMonths(S.month, -i)); v.push(p && p.amount != null ? Number(p.amount) : null); }
+    const pts = v.map((n, i) => [i, n]).filter((x) => x[1] != null);
+    if (pts.length < 3) return '';
+    const vals = pts.map((x) => x[1]); const max = Math.max(...vals), min = Math.min(...vals);
+    const xy = pts.map(([i, n]) => [4 + i * 16, 30 - ((n - min) / ((max - min) || 1)) * 24]);
+    const last = vals[vals.length - 1], avg = vals.slice(0, -1).reduce((t, n) => t + n, 0) / (vals.length - 1);
+    const hot = last > avg * 1.3 && last - avg >= 20;
+    const L = xy[xy.length - 1];
+    return `<svg class="spark${hot ? ' hot' : ''}" width="88" height="34" viewBox="0 0 88 34" role="img" aria-label="${esc(billTitle(b))}, last ${pts.length} months: ${vals.map((n) => '$' + Math.round(n)).join(', ')}">
+      <polyline points="${xy.map((q) => q[0].toFixed(1) + ',' + q[1].toFixed(1)).join(' ')}"/><circle cx="${L[0].toFixed(1)}" cy="${L[1].toFixed(1)}" r="3"/></svg>`;
+  }
+  // On-time streaks, counted back from the most recent finished month
+  function rentOnTime(r, k) {
+    const rp = getRentPay(r, k); const due = rentDue(r, rp);
+    if (due == null || !rp || !rp.received_at || Number(rp.amount_received || 0) < due) return false;
+    const d = dueOn(r.due_day, k); const limit = new Date(d.getTime() + ((r.grace_days || 0) + 1) * 86400000);
+    return new Date(rp.received_at) < limit;
+  }
+  function rentStreak(r) {
+    let n = 0, k = monthKey(new Date());
+    if (!rentOnTime(r, k)) k = addMonths(k, -1);
+    for (let i = 0; i < 24; i++, k = addMonths(k, -1)) { if (r.lease_start && k < r.lease_start.slice(0, 7) + '-01') break; if (rentOnTime(r, k)) n++; else break; }
+    return n;
+  }
+  function billsOnTime(k) {
+    const rows = billMonth(k, true).rows.filter((x) => !x.b.escrow && x.due && x.amt);
+    if (!rows.length) return null;
+    return rows.every((x) => x.pay && x.pay.paid_at && new Date(x.pay.paid_at) < new Date(x.due.getTime() + 86400000));
+  }
+  function billsStreak() {
+    let n = 0, k = addMonths(monthKey(new Date()), -1);
+    if (billsOnTime(monthKey(new Date())) === true) { n = 1; }
+    for (let i = 0; i < 24; i++, k = addMonths(k, -1)) { const t = billsOnTime(k); if (t === true) n++; else break; }
+    return n;
+  }
+  function streakDots(n) { return `<span class="sdots" aria-hidden="true">${Array.from({ length: 6 }, (_, i) => `<i class="${i >= 6 - Math.min(n, 6) ? 'on' : ''}" style="animation-delay:${i * 0.06}s"></i>`).join('')}</span>`; }
   function rentStatus(r, rp, period) {
     const due = rentDue(r, rp);
     const got = rp && rp.amount_received != null ? Number(rp.amount_received) : 0;
@@ -480,6 +518,18 @@
     }
   }
 
+  const ILLO = {
+    done: '<ellipse cx="75" cy="102" rx="52" ry="6" class="i-shadow"/><path d="M75 10 L128 48 L22 48 Z" class="i-roof"/><rect x="32" y="48" width="86" height="50" rx="3" class="i-wall"/><rect x="66" y="66" width="18" height="32" rx="2" class="i-roof"/><rect x="42" y="60" width="16" height="14" rx="2" class="i-win"/><rect x="92" y="60" width="16" height="14" rx="2" class="i-win"/><circle cx="122" cy="26" r="13" class="i-badge"/><path d="M116 26 l4 4 l8 -8" class="i-tick"/>',
+    empty: '<ellipse cx="75" cy="102" rx="46" ry="6" class="i-shadow"/><rect x="33" y="22" width="84" height="66" rx="10" class="i-dash"/><path d="M75 42 v26 M62 55 h26" class="i-plus"/>',
+    tools: '<ellipse cx="75" cy="102" rx="46" ry="6" class="i-shadow"/><path d="M52 30 a14 14 0 0 0 18 18 l30 30 a6 6 0 0 0 9 -9 l-30 -30 a14 14 0 0 0 -18 -18 l9 9 -3 9 -9 3 z" class="i-roof"/><circle cx="104" cy="35" r="10" class="i-win"/>',
+    people: '<ellipse cx="75" cy="102" rx="50" ry="6" class="i-shadow"/><circle cx="58" cy="40" r="14" class="i-win"/><path d="M34 90 a24 24 0 0 1 48 0 z" class="i-roof"/><circle cx="96" cy="46" r="11" class="i-wall i-stroke"/><path d="M78 90 a18 18 0 0 1 36 0 z" class="i-wall i-stroke"/>',
+    docs: '<ellipse cx="75" cy="102" rx="46" ry="6" class="i-shadow"/><rect x="44" y="20" width="56" height="72" rx="6" class="i-wall i-stroke"/><rect x="54" y="12" width="56" height="72" rx="6" class="i-paper"/><path d="M64 32 h36 M64 44 h36 M64 56 h24" class="i-lines"/>',
+    calm: '<ellipse cx="75" cy="102" rx="50" ry="6" class="i-shadow"/><circle cx="75" cy="50" r="30" class="i-win"/><path d="M60 52 q15 14 30 0" class="i-tick"/><circle cx="64" cy="44" r="3" class="i-dot"/><circle cx="86" cy="44" r="3" class="i-dot"/>'
+  };
+  function emptyState(kind, title, text, action) {
+    return `<div class="empty"><svg class="float" width="150" height="110" viewBox="0 0 150 110" aria-hidden="true">${ILLO[kind] || ILLO.empty}</svg>
+      <strong>${title}</strong>${text ? `<span>${text}</span>` : ''}${action || ''}</div>`;
+  }
   function skeletonView() {
     const card = '<div class="bill" aria-hidden="true"><div class="bill-top"><div class="sk" style="width:48px;height:48px;border-radius:14px"></div><div class="stack" style="flex:1;gap:8px"><div class="sk" style="height:14px;width:65%"></div><div class="sk" style="height:12px;width:40%"></div></div></div></div>';
     return `<div class="shell" aria-busy="true" aria-label="Loading"><header class="topbar"><div class="sk" style="height:12px;width:40%"></div><div class="sk" style="height:28px;width:55%;margin-top:6px"></div></header>
@@ -542,7 +592,7 @@
   function monthNav() {
     const isCur = S.month === monthKey(new Date());
     return `<div class="row between">
-      <div class="monthnav">
+      <div class="monthnav" data-swipe-month="1">
         <button class="iconbtn" data-act="month" data-delta="-1" aria-label="Previous month">${ICON.left}</button>
         <strong style="font-size:16px;min-width:140px;text-align:center">${monthLabel(S.month)}</strong>
         <button class="iconbtn" data-act="month" data-delta="1" aria-label="Next month">${ICON.right}</button>
@@ -562,6 +612,7 @@
         <div class="ring-center"><span class="label">${esc(label)}</span><span class="big display num ring-num">${money(left)}</span><span class="ring-pct">${pct}% paid</span></div>
       </div>
       <div class="foot"><span>${footL}</span><span class="${late ? 'late' : ''}">${footR}</span></div>
+      ${key.startsWith('bills-') ? (() => { const n = billsStreak(); return n >= 2 ? `<div class="foot streak-dark">${streakDots(n)}<span>All bills on time ${n} months in a row</span></div>` : ''; })() : ''}
     </section>`;
   }
   // ----- #22 month timeline -----
@@ -613,7 +664,9 @@
       <div class="chips" role="group" aria-label="Show floor">${unitChips}</div>
       <div class="seg" role="group" aria-label="Filter bills">${filt}</div>
       ${visible.length ? `<ul class="bills">${visible.map(billCard).join('')}</ul>` :
-        `<p class="muted" style="text-align:center;padding:28px 0">${S.filter === 'paid' ? 'Nothing paid yet this month.' : S.filter === 'unpaid' ? 'All caught up — every bill is paid.' : 'No bills here yet. Tap + to add one.'}</p>`}`;
+        (S.filter === 'paid' ? emptyState('calm', 'Nothing paid yet', 'Tick a bill, or swipe it right, when you pay it.')
+          : S.filter === 'unpaid' ? emptyState('done', 'All caught up', 'Every ' + monthLabel(S.month).split(' ')[0] + ' bill is paid. Enjoy the quiet.')
+          : emptyState('empty', 'No bills here yet', 'Add one, or scan a paper bill.', '<button class="btn primary-soft" data-act="new-bill">Add a bill</button>'))}`;
   }
 
   function billCard(r) {
@@ -622,7 +675,7 @@
     const editing = S.editing === b.id || !complete;
     const unit = unitName(b.unit_id);
     const justPaid = paid && FX.stamp === b.id && Date.now() < FX.stampUntil;
-    return `<li class="bill ${paid ? 'paid' : ''}" id="bill-${b.id}">${paid ? `<span class="paidstamp${justPaid ? ' slam' : ''}" aria-hidden="true">PAID</span>` : ''}
+    return `<li class="bill swipe ${paid ? 'paid' : ''}" id="bill-${b.id}" data-swipe-right="toggle" data-swipe-left="bill" data-id="${b.id}" data-paid="${paid}">${paid ? `<span class="paidstamp${justPaid ? ' slam' : ''}" aria-hidden="true">PAID</span>` : ''}
       <div class="bill-top">
         <button class="check" data-act="toggle" data-id="${b.id}" aria-pressed="${paid}" aria-label="${paid ? 'Mark unpaid' : 'Mark paid'}: ${esc(billTitle(b))}, ${esc(unit)}">${ICON.check}</button>
         <div class="bill-info">
@@ -643,7 +696,7 @@
             <button class="btn" data-act="bill" data-id="${b.id}" style="flex:1">Details</button>
           </div>
         </div>` : `<div class="bill-sum">
-          <div class="stack" style="gap:0"><span class="amt display num">${money(r.amt)}</span><span class="small muted">${r.due ? 'Due ' + fmtDay(r.due) : ''}${monthsLabel(b) ? ' · ' + monthsLabel(b) + ' only' : ''}${b.autopay ? ' · Autopay' : ''}${r.pay && r.pay.source === 'email' ? ' · from email' : ''}</span></div>
+          ${spark(b)}<div class="stack" style="gap:0"><span class="amt display num">${money(r.amt)}</span><span class="small muted">${r.due ? 'Due ' + fmtDay(r.due) : ''}${monthsLabel(b) ? ' · ' + monthsLabel(b) + ' only' : ''}${b.autopay ? ' · Autopay' : ''}${r.pay && r.pay.source === 'email' ? ' · from email' : ''}</span></div>
           <div class="btns">
             ${b.pay_url && !paid ? `<a class="btn" href="${esc(b.pay_url)}" target="_blank" rel="noopener">Pay ${ICON.ext}</a>` : ''}
             <button class="btn" data-act="edit" data-id="${b.id}" aria-label="Edit ${esc(billTitle(b))}">Edit</button>
@@ -667,7 +720,7 @@
       ${depDue.map((r) => { const by = new Date(fromIso(r.move_out_on).getTime() + 14 * 86400000); const d = dayDiff(by); return `<p class="notice${d <= 3 ? '' : ' info'}">Return ${esc(rentalTitle(r))}’s deposit${r.deposit ? ' (' + money(r.deposit) + ')' : ''} with an itemized list by <strong>${fmtDate(by)}</strong>${d >= 0 ? ' (' + d + ' days)' : ' (overdue)'}. <button class="linkbtn" data-act="moveout" data-id="${r.id}" style="min-height:0;padding:0">Record it</button></p>`; }).join('')}
       ${unmatchedCard()}
       ${vacantCards()}
-      ${md.rows.length ? `<ul class="bills">${md.rows.map(rentCard).join('')}</ul>` : '<p class="muted" style="text-align:center;padding:28px 0">No tenants yet. Tap + to add one.</p>'}
+      ${md.rows.length ? `<ul class="bills">${md.rows.map(rentCard).join('')}</ul>` : emptyState('people', 'No tenants yet', 'Add each floor’s tenant to track rent.', '<button class="btn primary-soft" data-act="new-rental">Add a tenant</button>')}
       ${mortgageCard()}`;
   }
   const TURNOVER = ['Repairs from move-out inspection', 'Paint touch-ups', 'Deep clean', 'Change locks', 'Test smoke & CO detectors', 'Take listing photos', 'List the unit', 'Schedule showings', 'Screen applicants', 'Sign lease & collect deposit'];
@@ -731,13 +784,14 @@
     const d = dueOn(r.due_day, S.month);
     const msg = encodeURIComponent('Hi' + (r.tenant_name ? ' ' + r.tenant_name.split(' ')[0] : '') + ', a reminder that ' + monthLabel(S.month).split(' ')[0] + ' rent of ' + money(x.due - x.got) + ' was due ' + (d ? fmtDay(d) : '') + '. Thank you!');
     const justPaid = done && FX.stamp === r.id && Date.now() < FX.stampUntil;
-    return `<li class="bill ${done ? 'paid' : ''}" id="rent-${r.id}">${done ? `<span class="paidstamp${justPaid ? ' slam' : ''}" aria-hidden="true">PAID</span>` : ''}
+    return `<li class="bill swipe ${done ? 'paid' : ''}" id="rent-${r.id}" ${x.due != null ? 'data-swipe-right="rent-toggle"' : ''} data-swipe-left="rental" data-id="${r.id}" data-paid="${done}">${done ? `<span class="paidstamp${justPaid ? ' slam' : ''}" aria-hidden="true">PAID</span>` : ''}
       <div class="bill-top">
         <button class="check" data-act="rent-toggle" data-id="${r.id}" aria-pressed="${done}" aria-label="${done ? 'Mark not received' : 'Mark received'}: rent from ${esc(rentalTitle(r))}" ${x.due == null ? 'disabled' : ''}>${ICON.check}</button>
         <div class="bill-info">
           <div class="row wrap" style="gap:6px"><span class="bill-name">${esc(r.tenant_name || 'Tenant')}</span><span class="tag">${esc(unit)}</span></div>
           <span class="small muted">${x.due != null ? 'Rent ' + money(x.due) + ' · due the ' + ordinal(r.due_day) : 'Rent amount not set'}${r.late_fee ? ' · late fee ' + money(r.late_fee) : ''}</span>
           <span class="pill ${x.st.k}">${esc(x.st.label)}</span>
+          ${(() => { const n = rentStreak(r); return n >= 2 ? `<span class="streak">${streakDots(n)} On time ${n} months in a row</span>` : ''; })()}
           ${x.rp && x.rp.source === 'email' ? '<span class="small muted">Recorded from Zelle email</span>' : ''}
         </div>
       </div>
@@ -811,13 +865,13 @@
     if (S.upkeepView === 'docs') return nav + docsView();
     let body;
     if (S.upkeepView === 'history') {
-      body = S.logs.length ? `<ul class="bills">${S.logs.map(logCard).join('')}</ul>` : '<p class="muted" style="text-align:center;padding:28px 0">Nothing logged yet. Tap <strong>Done</strong> on a task, or log a repair.</p>';
+      body = S.logs.length ? `<ul class="bills">${S.logs.map(logCard).join('')}</ul>` : emptyState('tools', 'Nothing logged yet', 'Tap Done on a task, or log a repair, to build your house history.', '<button class="btn primary-soft" data-act="new-log">Log a repair</button>');
     } else {
       const sched = tasks.filter((x) => x.st.k !== 'setup');
       const un = tasks.filter((x) => x.st.k === 'setup');
-      body = requestsSection() + (sched.length ? `<ul class="bills">${sched.map(taskCard).join('')}</ul>` : '') +
+      body = requestsSection() + yearWheel() + (sched.length ? `<ul class="bills">${sched.map(taskCard).join('')}</ul>` : '') +
         (un.length ? `<h2 class="section-h">Not scheduled yet</h2><p class="small muted" style="margin:-8px 0 0">Tap <strong>Done</strong> and enter when it was last done; the app works out the next date.</p><ul class="bills">${un.map(taskCard).join('')}</ul>` : '') +
-        (!tasks.length ? '<p class="muted" style="text-align:center;padding:28px 0">No upkeep tasks. Tap + to add one.</p>' : '');
+        (!tasks.length ? emptyState('tools', 'No upkeep tasks', 'Add the jobs that keep the house healthy.', '<button class="btn primary-soft" data-act="new-task">Add a task</button>') : '');
     }
     return `${nav}${weatherBanner()}<section class="hero" aria-label="Upkeep overview">
         <div class="row between" style="align-items:flex-end">
@@ -851,7 +905,7 @@
   }
   function appliancesView() {
     const list = S.appliances.slice().sort((a, b) => unitName(a.unit_id).localeCompare(unitName(b.unit_id)) || a.name.localeCompare(b.name));
-    if (!list.length) return '<p class="muted" style="text-align:center;padding:28px 0">Add your boiler, water heater, fridges and washers to track age, warranties and model numbers. Tap +.</p>';
+    if (!list.length) return emptyState('tools', 'No appliances yet', 'Add the boiler, water heater, fridges and washers to track age and warranties.', '<button class="btn primary-soft" data-act="new-appliance">Add an appliance</button>');
     return `<ul class="bills">${list.map((a) => `<li class="bill">
       <div class="bill-info">
         <div class="row wrap" style="gap:6px"><span class="bill-name">${esc(a.name)}</span><span class="tag">${esc(unitName(a.unit_id))}</span></div>
@@ -868,7 +922,7 @@
   }
   function prosView() {
     const list = S.contractors.slice().sort((a, b) => (a.trade || '').localeCompare(b.trade || '') || a.name.localeCompare(b.name));
-    if (!list.length) return '<p class="muted" style="text-align:center;padding:28px 0">Keep your plumber, electrician and boiler service here. Tap +.</p>';
+    if (!list.length) return emptyState('people', 'No contractors yet', 'Keep your plumber, electrician and boiler service one tap away.', '<button class="btn primary-soft" data-act="new-contractor">Add a contractor</button>');
     return `<ul class="bills">${list.map((c) => {
       const jobs = jobsFor(c); const spent = jobs.reduce((t, l) => t + (Number(l.cost) || 0), 0);
       const tel = (c.phone || '').replace(/[^\d+]/g, '');
@@ -892,7 +946,7 @@
     const expiring = S.documents.filter((d) => d.expires_on && dayDiff(fromIso(d.expires_on)) <= 30);
     return `${expiring.map((d) => { const x = dayDiff(fromIso(d.expires_on)); return `<p class="notice${x < 0 ? '' : ' info'}">${esc(d.title)} ${x < 0 ? 'expired' : 'expires'} ${fmtDate(fromIso(d.expires_on))}.</p>`; }).join('')}
       <div class="field"><label for="doc-q" class="sr">Search documents</label><input class="input" id="doc-q" type="search" placeholder="Search documents" value="${esc(S.docQuery)}" data-input="docq" autocomplete="off"></div>
-      ${!S.documents.length ? '<p class="muted" style="text-align:center;padding:28px 0">Keep the lease, insurance policy, deed, warranties and permits here. Tap + to add a photo or PDF.</p>' : ''}
+      ${!S.documents.length ? emptyState('docs', 'No documents yet', 'Keep the lease, insurance, deed and warranties in one safe place.', '<button class="btn primary-soft" data-act="new-doc">Add a document</button>') : ''}
       ${S.documents.length && !list.length ? '<p class="muted" style="text-align:center;padding:16px 0">Nothing matches.</p>' : ''}
       ${groups.map(([c, docs]) => `<h2 class="section-h">${esc(c)}</h2><ul class="bills">${docs.map((d) => `<li class="bill">
         <div class="bill-info">
@@ -918,6 +972,57 @@
     const r = await sb.storage.from('receipts').upload(path, file, { contentType: file.type || undefined, upsert: false });
     if (r.error) { toast('Upload failed: ' + r.error.message); return null; }
     return path;
+  }
+  const WHEEL_COL = { 'Heating & cooling': '#2B4C9B', 'Safety': '#A3400B', 'Exterior': '#1F6F5C', 'Yard': '#1F6F5C', 'Plumbing': '#8A6A12', 'Appliances': '#8A6A12', 'Electrical': '#6B3FA0', 'Cleaning': '#4D5853', 'Pest control': '#4D5853', 'Other': '#4D5853' };
+  function yearWheel() {
+    const tasks = S.tasks.filter((t) => t.active !== false && t.next_due);
+    if (!tasks.length) return '';
+    const start = monthKey(new Date());
+    const C = 150, R1 = 140, R0 = 86;
+    const ang = (i) => (i / 12) * 2 * Math.PI - Math.PI / 2;
+    const pt = (r, a) => [C + r * Math.cos(a), C + r * Math.sin(a)];
+    const season = (m) => (m === 12 || m <= 2) ? 'w-winter' : m <= 5 ? 'w-spring' : m <= 8 ? 'w-summer' : 'w-fall';
+    const arcs = []; const labels = [];
+    for (let i = 0; i < 12; i++) {
+      const k = addMonths(start, i), m = parseMonth(k).m;
+      const a0 = ang(i) + 0.012, a1 = ang(i + 1) - 0.012;
+      const [x0, y0] = pt(R1, a0), [x1, y1] = pt(R1, a1), [x2, y2] = pt(R0, a1), [x3, y3] = pt(R0, a0);
+      arcs.push(`<path d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${R1} ${R1} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)} L${x2.toFixed(1)} ${y2.toFixed(1)} A${R0} ${R0} 0 0 0 ${x3.toFixed(1)} ${y3.toFixed(1)} Z" class="${season(m)}${i === 0 ? ' w-now' : ''}"/>`);
+      const [lx, ly] = pt(R1 - 12, ang(i + 0.5));
+      labels.push(`<text x="${lx.toFixed(1)}" y="${(ly + 4).toFixed(1)}" class="w-label${i === 0 ? ' now' : ''}">${MONTH_NAMES[m - 1][0]}</text>`);
+    }
+    // every occurrence in the next 12 months
+    const occ = [];
+    tasks.forEach((t) => {
+      let d = t.next_due;
+      for (let n = 0; n < 12 && d; n++) {
+        const k = d.slice(0, 7) + '-01';
+        const i = (parseMonth(k).y - parseMonth(start).y) * 12 + parseMonth(k).m - parseMonth(start).m;
+        if (i > 11) break;
+        if (i >= 0) occ.push({ t, i, day: +d.slice(8, 10), date: d });
+        if (!t.interval_months) break;
+        d = addMonthsIso(d, t.interval_months);
+      }
+    });
+    const perMonth = {};
+    const dots = occ.map((o) => {
+      const slot = perMonth[o.i] = (perMonth[o.i] || 0) + 1;
+      const frac = o.i + Math.min(0.9, Math.max(0.1, (o.day - 1) / 30));
+      const r = R0 + 14 + ((slot - 1) % 3) * 13;
+      const [x, y] = pt(r, ang(frac));
+      const late = o.i === 0 && dayDiff(fromIso(o.date)) < 0;
+      return `<button type="button" class="wdot${late ? ' late' : ''}" data-act="task" data-id="${o.t.id}" aria-label="${esc(o.t.title)}, ${fmtDate(fromIso(o.date))}" title="${esc(o.t.title)} · ${fmtDay(fromIso(o.date))}" style="left:${(x / 3).toFixed(2)}%;top:${(y / 3).toFixed(2)}%;background:${WHEEL_COL[o.t.category] || '#4D5853'}"></button>`;
+    });
+    const soon = occ.filter((o) => o.i === 0).length;
+    return `<section class="card wheelcard" aria-label="Upkeep year at a glance">
+      <h2>Year at a glance</h2>
+      <div class="wheel">
+        <svg class="wheel-svg" viewBox="0 0 300 300" aria-hidden="true">${arcs.join('')}<circle cx="150" cy="150" r="${R0 - 2}" class="w-hub"/>${labels.join('')}</svg>
+        ${dots.join('')}
+        <div class="wheel-center"><span class="small muted">${monthLabel(start).split(' ')[0]}</span><strong>${soon} ${soon === 1 ? 'task' : 'tasks'}</strong><span class="small muted">${occ.length} in the next 12 months</span></div>
+      </div>
+      <div class="wlegend small"><span><i style="background:#2B4C9B"></i>Heating</span><span><i style="background:#A3400B"></i>Safety</span><span><i style="background:#1F6F5C"></i>Outside</span><span><i style="background:#8A6A12"></i>Plumbing &amp; appliances</span></div>
+    </section>`;
   }
   function taskCard(x) {
     const t = x.t;
@@ -1235,7 +1340,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.1</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.2</p>`;
   }
 
   function importCard() {
@@ -2238,6 +2343,7 @@ function setup() {
 
   // ---------- events ----------
   document.addEventListener('click', (e) => {
+    if (Date.now() < suppressClick) { e.preventDefault(); e.stopPropagation(); return; }
     const el = e.target.closest('[data-act]');
     if (!el || el.tagName === 'A') return;
     if (el.dataset.act === 'sheet-close-bg' && e.target !== el) return; // taps inside the sheet
@@ -2255,6 +2361,40 @@ function setup() {
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvt = e; renderSoon(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.view === 'app' && navigator.onLine && !S.sheet) loadAll(); });
 
+  // Swipe cards right (paid) / left (details); swipe the month header to change month
+  let suppressClick = 0;
+  (function swipes() {
+    let el = null, x0 = 0, y0 = 0, dx = 0, mode = null;
+    document.addEventListener('pointerdown', (e) => {
+      if (S.view !== 'app' || S.sheet || e.button > 0) return;
+      if (e.target.closest('input,textarea,select,a,label')) return;
+      el = e.target.closest('.swipe, [data-swipe-month]'); if (!el) return;
+      x0 = e.clientX; y0 = e.clientY; dx = 0; mode = null;
+    });
+    document.addEventListener('pointermove', (e) => {
+      if (!el) return;
+      const mx = e.clientX - x0, my = e.clientY - y0;
+      if (!mode) { if (Math.abs(mx) > 10 && Math.abs(mx) > Math.abs(my) * 1.3) mode = 'h'; else if (Math.abs(my) > 10) { el = null; return; } else return; }
+      dx = Math.max(-150, Math.min(150, mx));
+      el.style.transition = 'none'; el.style.transform = 'translateX(' + dx + 'px)';
+      if (el.classList.contains('swipe')) {
+        el.classList.toggle('sw-right', dx > 20 && !!el.dataset.swipeRight); el.classList.toggle('sw-left', dx < -20);
+        el.classList.toggle('sw-armed', Math.abs(dx) > 90);
+      }
+    });
+    const end = () => {
+      if (!el) return;
+      const t = el; el = null;
+      t.style.transition = ''; t.style.transform = '';
+      t.classList.remove('sw-right', 'sw-left', 'sw-armed');
+      if (mode !== 'h') return;
+      suppressClick = Date.now() + 400;
+      if (t.dataset.swipeMonth) { if (Math.abs(dx) > 60) { S.month = addMonths(S.month, dx < 0 ? 1 : -1); S.editing = null; render(); } return; }
+      if (dx > 90 && t.dataset.swipeRight) onAct({ dataset: { act: t.dataset.swipeRight, id: t.dataset.id } });
+      else if (dx < -90 && t.dataset.swipeLeft) onAct({ dataset: { act: t.dataset.swipeLeft, id: t.dataset.id } });
+    };
+    document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
+  })();
   // Drag a sheet down by its handle/header to close it
   (function sheetDrag() {
     let y0 = null, sheet = null, dy = 0;
