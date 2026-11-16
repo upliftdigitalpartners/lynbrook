@@ -159,7 +159,7 @@
         sb.from('rent_payments').select('*').eq('household_id', hid).gte('period', since),
         sb.from('maintenance_tasks').select('*').eq('household_id', hid).order('created_at'),
         sb.from('maintenance_log').select('*').eq('household_id', hid).order('done_on', { ascending: false }).limit(500),
-        sb.from('email_imports').select('*').eq('household_id', hid).order('created_at', { ascending: false }).limit(15)
+        sb.from('email_imports').select('*').eq('household_id', hid).order('created_at', { ascending: false }).limit(40)
       ]);
       res.forEach((r) => { if (r.error) throw r.error; });
       const [u, b, p, r, rp, t, l, im] = res.map((x) => x.data);
@@ -461,6 +461,7 @@
       ${hero('Rent collected', money(md.received), pct, 'of ' + money(md.expected) + ' expected', md.late ? md.late + ' late' : 'None late', md.late)}
       ${needs ? `<p class="notice">Add each tenant’s rent amount so the app can track it. Tap <strong>Details</strong> on the card.</p>` : ''}
       ${soon.map((r) => { const d = dayDiff(fromIso(r.lease_end)); return `<p class="notice info">${esc(rentalTitle(r))}’s lease ${d < 0 ? 'ended' : 'ends'} ${fmtDate(fromIso(r.lease_end))}${d >= 0 ? ' (' + d + ' days)' : ''}.</p>`; }).join('')}
+      ${unmatchedCard()}
       ${md.rows.length ? `<ul class="bills">${md.rows.map(rentCard).join('')}</ul>` : '<p class="muted" style="text-align:center;padding:28px 0">No tenants yet. Tap + to add one.</p>'}
       ${mortgageCard()}`;
   }
@@ -476,6 +477,7 @@
           <div class="row wrap" style="gap:6px"><span class="bill-name">${esc(r.tenant_name || 'Tenant')}</span><span class="tag">${esc(unit)}</span></div>
           <span class="small muted">${x.due != null ? 'Rent ' + money(x.due) + ' · due the ' + ordinal(r.due_day) : 'Rent amount not set'}${r.late_fee ? ' · late fee ' + money(r.late_fee) : ''}</span>
           <span class="pill ${x.st.k}">${esc(x.st.label)}</span>
+          ${x.rp && x.rp.source === 'email' ? '<span class="small muted">Recorded from Zelle email</span>' : ''}
         </div>
       </div>
       <div class="btns">
@@ -484,6 +486,23 @@
         <button class="btn" data-act="rental" data-id="${r.id}" style="flex:1">Details</button>
       </div>
     </li>`;
+  }
+  function unmatchedCard() {
+    const list = S.imports.filter((x) => x.kind === 'zelle' && x.status === 'unmatched' && x.amount != null);
+    if (!list.length) return '';
+    const opts = S.rentals.filter((r) => r.active !== false).map((r) => `<option value="${r.id}">${esc(rentalTitle(r))} · ${esc(unitName(r.unit_id))}</option>`).join('');
+    return `<section class="card" aria-label="Payments to check">
+      <h2>Payments to check</h2>
+      <p class="small muted">These Zelle payments didn’t match a tenant. Pick who sent it. Add their Zelle name under the tenant’s Details so it matches next time.</p>
+      ${list.map((x) => `<div class="stack" style="gap:6px;padding-top:10px;border-top:1px solid var(--line-2)">
+        <div class="row between"><strong>${money(x.amount)} from ${esc(x.payer || 'unknown')}</strong><span class="small muted">${x.received_at ? fmtDay(new Date(x.received_at)) : ''}</span></div>
+        <div class="row wrap" style="gap:8px">
+          <label class="sr" for="as-${esc(x.message_id)}">Tenant for this payment</label>
+          <select class="input" id="as-${esc(x.message_id)}" style="flex:1;min-width:160px">${opts}</select>
+          <button class="btn" data-act="assign-zelle" data-mid="${esc(x.message_id)}">Assign</button>
+          <button class="btn" data-act="dismiss-zelle" data-mid="${esc(x.message_id)}">Not rent</button>
+        </div></div>`).join('')}
+    </section>`;
   }
   function mortgageCard() {
     const mort = S.bills.filter((b) => b.active !== false && b.category === 'Mortgage');
@@ -675,36 +694,37 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v1.3.1</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v1.4</p>`;
   }
 
   function importCard() {
     const last = S.imports[0];
     const label = { applied: 'Added', kept_manual: 'Kept yours', already_paid: 'Already paid', unmatched: 'Needs a look', ignored: 'Skipped' };
+    const nameOf = (x) => { if (x.kind === 'zelle') { const r = S.rentals.find((y) => y.id === x.rental_id); return 'Zelle' + (r ? ' · ' + rentalTitle(r) : ''); } const b = S.bills.find((y) => y.id === x.bill_id); return b ? billTitle(b) : (x.provider || 'Email'); };
     const cls = { applied: 'paid', kept_manual: 'up', already_paid: 'up', unmatched: 'setup', ignored: 'up' };
     const rows = S.imports.filter((x) => x.status !== 'ignored').slice(0, 8);
     return `<section class="card" aria-label="Email bill import">
-      <h2>Import bills from Gmail</h2>
-      ${last ? `<p class="ok">Working · last email ${fmtDay(new Date(last.created_at))}</p>` : '<p class="small muted">Not set up yet. Takes about 2 minutes, in the Gmail account that gets your PSEG, National Grid, Liberty and Rocket Mortgage emails.</p>'}
+      <h2>Import bills &amp; Zelle rent from Gmail</h2>
+      ${last ? `<p class="ok">Working · last email ${fmtDay(new Date(last.created_at))}</p>` : '<p class="small muted">Not set up yet. Takes about 2 minutes, in the Gmail account that gets your PSEG, National Grid, Liberty, Rocket Mortgage and Chase Zelle emails.</p>'}
       <ol class="steps small">
         <li>On a computer, signed in to <strong>that</strong> Gmail, open <a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener">script.google.com → New project</a>.</li>
         <li>Delete what’s there, then paste the setup script: <button class="btn" data-act="copy-script" style="height:36px;margin-top:6px">Copy setup script</button></li>
         <li>Click <strong>Save</strong> (the disk icon), choose <strong>setup</strong> in the function menu, click <strong>Run</strong>, and allow access.</li>
       </ol>
-      <p class="small muted">It checks for new utility emails every 4 hours. It never changes amounts you typed or bills already marked paid. Only you can see the script; it only reads emails from those four companies.</p>
-      ${rows.length ? `<div class="stack" style="gap:8px">${rows.map((x) => { const b = S.bills.find((y) => y.id === x.bill_id); return `<div class="row between small" style="align-items:flex-start;gap:8px"><div class="stack" style="gap:0;min-width:0"><span>${esc(b ? billTitle(b) : (x.provider || 'Email'))}</span><span class="muted">${esc(x.detail || x.subject || '')}</span></div><span class="pill ${cls[x.status] || 'up'}" style="margin:0;flex:none">${label[x.status] || esc(x.status)}</span></div>`; }).join('')}</div>` : ''}
+      <p class="small muted">It checks for new utility emails every 4 hours. It never changes amounts you typed or bills already marked paid. Only you can see the script. It only reads emails from those companies and Zelle alerts. In the Chase app, turn on email alerts for Zelle payments received.</p>
+      ${rows.length ? `<div class="stack" style="gap:8px">${rows.map((x) => `<div class="row between small" style="align-items:flex-start;gap:8px"><div class="stack" style="gap:0;min-width:0"><span>${esc(nameOf(x))}</span><span class="muted">${esc(x.detail || x.subject || '')}</span></div><span class="pill ${cls[x.status] || 'up'}" style="margin:0;flex:none">${label[x.status] || esc(x.status)}</span></div>`).join('')}</div>` : ''}
       <button class="btn" data-act="rotate-import">Make a new key (stops the old script)</button>
     </section>`;
   }
   function importScript() {
     const url = CFG.SUPABASE_URL + '/functions/v1/import-bill';
     return `// Evergreen House — Gmail bill import
-// Sends new PSEG, National Grid, Liberty and Rocket Mortgage emails to your Evergreen House app.
+// Sends new PSEG, National Grid, Liberty, Rocket Mortgage and Zelle emails to your Evergreen House app.
 // Run "setup" once. After that it runs by itself every 4 hours.
 
 const ENDPOINT = '${url}';
 const KEY = '${S.household.import_token}';
-const QUERY = 'from:(pseg OR psegliny OR nationalgrid OR "national grid" OR libertyutilities OR libertyenergyandwater OR "liberty utilities" OR rocketmortgage OR "rocket mortgage") newer_than:45d';
+const QUERY = '(from:(pseg OR psegliny OR nationalgrid OR "national grid" OR libertyutilities OR libertyenergyandwater OR "liberty utilities" OR rocketmortgage OR "rocket mortgage") OR zelle OR (from:chase.com "sent you money")) newer_than:45d';
 
 function importBills() {
   const threads = GmailApp.search(QUERY, 0, 40);
@@ -818,6 +838,7 @@ function setup() {
         <div class="grid2">${f('r-rent', 'Monthly rent ($)', moneyInp('r-rent', 'rent_amount', r.rent_amount))}${f('r-day', 'Due day', inp('r-day', 'due_day', r.due_day, 'type="number" inputmode="numeric" min="1" max="31"'))}</div>
         <div class="grid2">${f('r-grace', 'Grace days', inp('r-grace', 'grace_days', r.grace_days, 'type="number" inputmode="numeric" min="0" max="31"'))}${f('r-fee', 'Late fee ($)', moneyInp('r-fee', 'late_fee', r.late_fee))}</div>
         <div class="grid2">${f('r-start', 'Lease start', inp('r-start', 'lease_start', r.lease_start, 'type="date"'))}${f('r-end', 'Lease end', inp('r-end', 'lease_end', r.lease_end, 'type="date"'))}</div>
+        ${f('r-payer', 'Also pays as <span class="muted">(other names on Zelle, comma-separated)</span>', inp('r-payer', 'payer_names', r.payer_names, 'autocomplete="off" placeholder="e.g. spouse’s name"'))}
         ${f('r-dep', 'Security deposit ($)', moneyInp('r-dep', 'deposit', r.deposit))}
         ${f('r-notes', 'Notes', `<textarea class="input" id="r-notes" name="notes">${esc(r.notes)}</textarea>`)}
       </section>`;
@@ -931,6 +952,30 @@ function setup() {
         try { await navigator.clipboard.writeText(importScript()); toast('Setup script copied'); }
         catch (_) { download('evergreen-gmail-import.gs', importScript(), 'text/plain'); }
         break;
+      case 'assign-zelle': case 'dismiss-zelle': {
+        const mid = el.dataset.mid;
+        const imp = S.imports.find((x) => x.message_id === mid);
+        if (!imp) break;
+        if (act === 'assign-zelle') {
+          const sel = document.getElementById('as-' + mid);
+          const r = S.rentals.find((x) => x.id === (sel && sel.value));
+          if (!r) break;
+          const d = imp.received_at ? new Date(imp.received_at) : new Date();
+          const period = monthKey(d);
+          const rp = getRentPay(r, period);
+          saveRentPay(r, period, { amount_due: rentDue(r, rp), amount_received: Math.round((Number((rp && rp.amount_received) || 0) + Number(imp.amount)) * 100) / 100, received_at: d.toISOString(), method: 'Zelle' });
+          Object.assign(imp, { status: 'applied', rental_id: r.id, detail: money(imp.amount) + ' from ' + (imp.payer || 'unknown') + ' → ' + rentalTitle(r) + ' (assigned by you)' });
+          if (imp.payer && !(r.tenant_name || '').toLowerCase().includes(imp.payer.toLowerCase()) && !(r.payer_names || '').toLowerCase().includes(imp.payer.toLowerCase())) {
+            saveRental(Object.assign({}, r, { payer_names: [r.payer_names, imp.payer].filter(Boolean).join(', ') }));
+          }
+          toast('Added to ' + rentalTitle(r) + '’s rent');
+        } else {
+          Object.assign(imp, { status: 'ignored', detail: 'Marked not rent' });
+          toast('Removed from the list');
+        }
+        queue({ kind: 'update', table: 'email_imports', row: { status: imp.status, rental_id: imp.rental_id || null, detail: imp.detail }, match: { household_id: S.household.id, message_id: mid } });
+        render(); break;
+      }
       case 'rotate-import': {
         const r = await sb.rpc('rotate_import_token', { h: S.household.id });
         if (r.error) toast(r.error.message); else { S.household.import_token = r.data; saveCache(); render(); toast('New key made. Copy the script again and replace the old one.'); }
@@ -1018,7 +1063,7 @@ function setup() {
       const nr = Object.assign({}, r, {
         tenant_name: val('tenant_name') || null, unit_id: val('unit_id') || null, phone: val('phone') || null, email: val('email') || null,
         rent_amount: num(val('rent_amount')), due_day: intv('due_day', 1, 31) || 1, grace_days: intv('grace_days', 0, 31) ?? 0,
-        late_fee: num(val('late_fee')), deposit: num(val('deposit')), lease_start: val('lease_start') || null, lease_end: val('lease_end') || null, notes: val('notes') || null
+        late_fee: num(val('late_fee')), deposit: num(val('deposit')), payer_names: val('payer_names') || null, lease_start: val('lease_start') || null, lease_end: val('lease_end') || null, notes: val('notes') || null
       });
       saveRental(nr);
       if (!isNew) {

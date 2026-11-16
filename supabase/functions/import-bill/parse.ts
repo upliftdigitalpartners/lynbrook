@@ -116,3 +116,61 @@ export function matchAccount(textDigits: string[], rawText: string, accounts: { 
   if (hits.size === 0 && accounts.length === 1) return accounts[0].id;
   return null;
 }
+
+// ---------- Zelle ----------
+export type Zelle = { incoming: boolean; amount: number | null; payer: string | null };
+
+const NAME = "((?!Zelle\\b)[A-Z][A-Za-z'’.\\-]+(?: +[A-Z][A-Za-z'’.\\-]+){0,3})";
+
+// Returns null when the email isn't a Zelle notice at all.
+export function parseZelle(from: string, subject: string, text: string): Zelle | null {
+  const flat = (subject + '\n' + text).replace(/ /g, ' ').replace(/[ \t]+/g, ' ');
+  const chaseMoney = /chase\.com/i.test(from) && /(sent you money|received money|sent you \$)/i.test(flat);
+  if (!/zelle/i.test(flat + from) && !chaseMoney) return null;
+  const low = flat.toLowerCase();
+  const outgoing = /(you sent|you('ve| have) sent|payment to |sent to |request(ed)? (money|payment)|is requesting|you requested|money request|scheduled a payment)/.test(low);
+  const incoming = !outgoing && /(received|sent you|has sent you|deposited|is on (its|the) way to you|money (is )?waiting|you got)/.test(low);
+  if (!incoming) return { incoming: false, amount: null, payer: null };
+
+  let amount: number | null = null;
+  let payer: string | null = null;
+  const pats: [RegExp, number, number][] = [
+    [new RegExp('received\\s+\\$\\s?([\\d,]+\\.\\d{2})\\s+(?:from|via Zelle from)\\s+' + NAME), 1, 2],
+    [new RegExp(NAME + '\\s+(?:has\\s+)?sent\\s+you\\s+\\$\\s?([\\d,]+\\.\\d{2})'), 2, 1],
+    [new RegExp('\\$\\s?([\\d,]+\\.\\d{2})\\s+(?:from|sent by)\\s+' + NAME), 1, 2],
+    [new RegExp(NAME + '\\s+(?:has\\s+)?sent\\s+you\\s+(?:money|a payment)'), 0, 1],
+  ];
+  for (const [re, ai, ni] of pats) {
+    const m = flat.match(re);
+    if (m) { if (ai) amount = parseFloat(m[ai].replace(/,/g, '')); payer = m[ni]; break; }
+  }
+  if (!payer) { const m = flat.match(/(?:^|\n)\s*(?:from|sender|sent by)\s*:?\s*([A-Za-z][A-Za-z'’.\- ]{1,60})/i); if (m) payer = m[1]; }
+  if (amount == null) { const m = flat.match(/amount\s*:?\s*\$\s?([\d,]+\.\d{2})/i) || flat.match(/\$\s?([\d,]+\.\d{2})/); if (m) amount = parseFloat(m[1].replace(/,/g, '')); }
+  if (payer) payer = payer.replace(/\.?\s*(memo|message|note)\b.*$/i, '').replace(/\s+(on|via|with|to|for|and|at)\b.*$/i, '').replace(/\s+(Zelle|Your|The)\b.*$/, '').replace(/\.$/, '').trim() || null;
+  return { incoming: true, amount: amount != null && isFinite(amount) ? Math.round(amount * 100) / 100 : null, payer };
+}
+
+const norm = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+
+// Match a payer name to a tenant: full name, alias, or first + last name both present.
+export function matchTenant(payer: string | null, amount: number | null, rentals: { id: string; tenant_name: string | null; payer_names: string | null; rent_amount: number | string | null }[]): { id: string; how: 'name' | 'amount' } | null {
+  if (payer) {
+    const p = norm(payer);
+    const pw = new Set(p.split(' '));
+    const hits = rentals.filter((r) => {
+      const names = [r.tenant_name, ...(r.payer_names || '').split(/[,;\n]/)].map((x) => norm(x || '')).filter(Boolean);
+      return names.some((n) => {
+        if (n === p || p.includes(n) || n.includes(p) && p.length >= 4) return true;
+        const parts = n.split(' ').filter((w) => w.length > 1);
+        return parts.length >= 2 && pw.has(parts[0]) && pw.has(parts[parts.length - 1]);
+      });
+    });
+    if (hits.length === 1) return { id: hits[0].id, how: 'name' };
+    if (hits.length > 1) return null;
+  }
+  if (amount != null) {
+    const hits = rentals.filter((r) => r.rent_amount != null && Number(r.rent_amount) === amount);
+    if (hits.length === 1) return { id: hits[0].id, how: 'amount' };
+  }
+  return null;
+}
