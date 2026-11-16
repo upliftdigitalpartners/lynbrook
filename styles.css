@@ -199,3 +199,19 @@ textarea.input { padding: 10px 12px; min-height: 80px; resize: vertical; }
 .tbl th:first-child { text-align: left; font-weight: 500; }
 .tbl thead th { border-top: 0; color: var(--muted); font-size: 12px; font-weight: 600; }
 .topbar-row h1 { flex: 1; }
+
+/* v1.5 setup guide */
+.guide { display: flex; flex-direction: column; }
+.gstep { border-top: 1px solid var(--line-2); }
+.gstep summary { list-style: none; display: flex; align-items: center; gap: 12px; min-height: 52px; cursor: pointer; font-weight: 600; }
+.gstep summary::-webkit-details-marker { display: none; }
+.gstep summary::after { content: '›'; margin-left: auto; color: var(--muted); font-size: 22px; transition: transform .15s; }
+.gstep[open] summary::after { transform: rotate(90deg); }
+.gnum { width: 28px; height: 28px; flex: none; border-radius: 99px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; background: var(--chip); color: var(--muted-2); }
+.gnum svg { width: 16px; height: 16px; }
+.gstep.done .gnum { background: var(--accent); color: var(--accent-ink); }
+.gstep.done .gtitle { color: var(--muted); }
+.gbody { padding: 0 0 14px 40px; display: flex; flex-direction: column; gap: 10px; font-size: 14px; }
+.gbody .steps li { line-height: 1.5; }
+.banner { width: 100%; text-align: left; border: 0; font: inherit; font-size: 14px; font-weight: 600; display: flex; justify-content: space-between; min-height: 44px; cursor: pointer; }
+#guide { scroll-margin-top: 120px; }
