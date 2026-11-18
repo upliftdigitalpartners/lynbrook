@@ -667,3 +667,27 @@ details.inner > summary { cursor: pointer; color: var(--accent); font-weight: 60
 .ut.all .ut-icon { background: rgba(255,255,255,.12); }
 .ut.all strong { font-size: 28px; }
 @media (prefers-reduced-motion: reduce) { .utils { animation: none; } }
+
+/* ===== v2.8 · friendlier everyday flows ===== */
+#toast.has-undo { pointer-events: auto; display: flex; align-items: center; gap: 14px; padding: 8px 8px 8px 16px; }
+.toast-undo { min-height: 36px; padding: 0 14px; border-radius: 10px; border: 0; background: var(--accent); color: var(--accent-ink, #fff); font: inherit; font-weight: 800; cursor: pointer; }
+.fab { position: fixed; right: max(16px, calc((100vw - 640px) / 2 + 16px)); bottom: calc(84px + var(--safe-b)); z-index: 25; display: inline-flex; align-items: center; gap: 8px; height: 54px; padding: 0 20px 0 16px; border-radius: 99px; border: 0; background: var(--accent); color: var(--accent-ink, #fff); font: inherit; font-size: 15px; font-weight: 800; cursor: pointer; box-shadow: 0 14px 28px -10px rgba(20,57,45,.65); animation: v27pop .35s cubic-bezier(.2,.8,.2,1) both; }
+.fab span { font-size: 18px; }
+.fab:active { transform: scale(.96); }
+.main { padding-bottom: calc(160px + var(--safe-b)); }
+.herocar { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; gap: 0; margin: 0 -16px; padding: 0; scroll-behavior: smooth; }
+.herocar::-webkit-scrollbar { display: none; }
+.hc-slide { flex: 0 0 100%; scroll-snap-align: center; padding: 0 16px; box-sizing: border-box; display: flex; flex-direction: column; }
+.hc-slide > * { flex: 1; }
+.hc-dots { display: flex; justify-content: center; gap: 4px; margin-top: 6px; }
+.hc-dots button { width: 28px; height: 24px; border: 0; background: transparent; padding: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.hc-dots button::after { content: ''; width: 8px; height: 8px; border-radius: 99px; background: var(--line); transition: width .25s, background .25s; }
+.hc-dots button[aria-pressed="true"]::after { width: 20px; background: var(--accent); }
+.gotrow { margin-top: 2px; }
+.gotbtn { background: var(--accent); color: var(--accent-ink, #fff); border-color: transparent; font-weight: 800; }
+.gotbtn .small { font-weight: 600; opacity: .85; }
+.partialrow { margin-top: 2px; }
+.editfold summary { flex-wrap: wrap; row-gap: 2px; }
+.editfold summary .small { flex-basis: 100%; order: 3; font-weight: 500; }
+@media (prefers-reduced-motion: reduce) { .fab { animation: none; } .herocar { scroll-behavior: auto; } }
+#toast { bottom: calc(150px + var(--safe-b)); }
