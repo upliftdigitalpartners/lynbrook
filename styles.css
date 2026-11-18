@@ -691,3 +691,24 @@ details.inner > summary { cursor: pointer; color: var(--accent); font-weight: 60
 .editfold summary .small { flex-basis: 100%; order: 3; font-weight: 500; }
 @media (prefers-reduced-motion: reduce) { .fab { animation: none; } .herocar { scroll-behavior: auto; } }
 #toast { bottom: calc(150px + var(--safe-b)); }
+
+/* ===== v2.9 ===== */
+button.ut { font: inherit; text-align: left; cursor: pointer; transition: transform .15s, box-shadow .2s; }
+button.ut:active { transform: scale(.98); }
+button.ut.on { box-shadow: 0 0 0 2px var(--accent); }
+.ut-go { margin-left: auto; font-size: 18px; opacity: .6; }
+.cf-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-radius: 14px; background: var(--paid-bg); color: var(--paid-fg); font-size: 14px; scroll-margin-top: 120px; animation: v27up .3s ease-out both; }
+.cf-bar .linkbtn { min-height: 32px; padding: 0; color: inherit; font-weight: 800; }
+#bill-list { scroll-margin-top: 120px; }
+.textbtn { background: var(--late-bg); color: var(--late-fg); border-color: transparent; font-weight: 800; }
+.headline { padding: 4px 2px; animation: v27up .4s ease-out both; }
+.headline p { margin: 0; font-size: 22px; line-height: 1.35; font-weight: 500; }
+.headline strong { font-weight: 700; }
+.ok-num { color: var(--paid-fg); } .late-num { color: var(--late-fg); }
+@media (prefers-reduced-motion: reduce) { .cf-bar, .headline { animation: none; } }
+
+/* Text size: scale the page and sheets, keep the tab bar and floating button fixed in place */
+:root[data-text="1.12"] .topbar, :root[data-text="1.12"] .main, :root[data-text="1.12"] .sheet, :root[data-text="1.12"] .story-main { zoom: 1.12; }
+:root[data-text="1.25"] .topbar, :root[data-text="1.25"] .main, :root[data-text="1.25"] .sheet, :root[data-text="1.25"] .story-main { zoom: 1.25; }
+:root[data-text] .tab span { font-size: 12px; font-weight: 700; }
+.main > .row.between:has(.monthnav) { flex-wrap: wrap; row-gap: 8px; }
