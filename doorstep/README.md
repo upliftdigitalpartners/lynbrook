@@ -39,9 +39,13 @@ Edge functions live in `doorstep/supabase/functions` (assist, scan-bill, tenant,
 npx supabase functions deploy assist scan-bill tenant weather --project-ref aprlmkajyotlsswjgvfv --use-api --no-verify-jwt
 ```
 
-## Not in Doorstep yet
+## Reminders, email import, properties
 
-- **AI features** (Ask, scan a bill, recap) need a `GROQ_API_KEY` secret on the Doorstep Supabase project.
-- **Push reminders** need their own VAPID keys plus the `send-reminders` function and its schedule.
-- **Gmail bill import and the setup guide** are hidden, because the importer is tuned to Evergreen's utilities.
-- **Switching between properties** isn't available yet; the app opens the first one.
+- **Push reminders:** Doorstep has its own VAPID keys (saved as Supabase secrets; the public key is in `config.js`). The `send-reminders` function runs hourly, and `weather` runs at 12:07 and 21:07 UTC (pg_cron + pg_net, with a `CRON_SECRET`).
+- **Gmail import** works for any landlord. The Apps Script looks for emails that read like bills, statements or Zelle payments. `import-bill` matches them to bills by the bill's name in the sender or subject, by account number, or by the unit named in the email, and records Zelle rent.
+- **Setup guide** (Settings): home screen, reminders, bills, pay info, tenants, mortgage, Zelle alerts, Gmail import, upkeep. It's hidden in the demo.
+- **Several properties:** tap the address at the top to switch, or to add another (up to 5).
+
+## Still needed
+
+- **AI features** (Ask, scan a bill, recap) need a `GROQ_API_KEY` secret on the Doorstep Supabase project: Project Settings › Edge Functions › Secrets. Use a separate Groq key from Evergreen's, so demo visitors can't use up Evergreen's limits.
