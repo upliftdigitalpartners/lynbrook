@@ -7,7 +7,7 @@
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
   });
 
-  const CATEGORIES = ['Mortgage', 'Electric', 'Gas', 'Water', 'Internet & phone', 'Insurance', 'Property tax', 'Trash', 'Contractor', 'Other'];
+  const CATEGORIES = ['Mortgage', 'Electric', 'Gas', 'Water', 'Internet & phone', 'Insurance', 'Property tax', 'Trash', 'Contractor', 'Streaming', 'Subscriptions', 'Credit card', 'Car', 'Health & fitness', 'Shopping', 'Other'];
   const UPKEEP_CATS = ['Heating & cooling', 'Plumbing', 'Electrical', 'Safety', 'Exterior', 'Appliances', 'Yard', 'Cleaning', 'Pest control', 'Other'];
   const DOC_CATS = ['Lease', 'Insurance', 'Deed & mortgage', 'Tax', 'Warranty & manual', 'Permit', 'Receipt', 'Other'];
   const TRADES = ['Plumber', 'Electrician', 'Heating & cooling', 'Roofer', 'Handyman', 'Painter', 'Landscaper', 'Snow removal', 'Pest control', 'Appliance repair', 'Locksmith', 'Cleaner', 'Other'];
@@ -60,7 +60,9 @@
   function unitName(id) { const u = S.units.find((x) => x.id === id); return u ? u.name : 'Whole house'; }
   // Anything other than the whole house is its own place: floors, or another property like Cedarcroft
   function isFloor(name) { return !!name && !/^whole house$/i.test(name.trim()); }
-  function wholeId() { return (S.units.find((u) => !isFloor(u.name)) || {}).id || null; }
+  function wholeId() { return (S.units.find((u) => /^whole house$/i.test((u.name || '').trim())) || S.units.find((u) => !isFloor(u.name)) || {}).id || null; }
+  function personalUnit() { return S.units.find((u) => /^personal$/i.test((u.name || '').trim())) || null; }
+  function isPersonal(unitId) { const u = personalUnit(); return !!u && u.id === unitId; }
   function billTitle(b) { return b.label ? b.name + ' · ' + b.label : b.name; }
   function payKey(id, period) { return id + '|' + period; }
   function getPay(b, period) { return S.payments[payKey(b.id, period)] || null; }
@@ -123,6 +125,7 @@
     bills: sv('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>'),
     rent: sv('<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M14 9l2 2"/>'),
     upkeep: sv('<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/>'),
+    personal: sv('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'),
     summary: sv('<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/><path d="M16 6V3.5h2.5V8"/>'),
     settings: sv('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>')
   };
@@ -278,6 +281,7 @@
     return { k: 'up', label: 'Due ' + due.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) };
   }
   function unitMatch(unitId) {
+    if (isPersonal(unitId)) return false;
     if (S.unit === 'all') return true;
     const n = unitName(unitId);
     if (S.unit === 'shared') return !isFloor(n);
@@ -861,20 +865,20 @@
 
   function appView() {
     if (S.tour === undefined) S.tour = tourSeen() || !S.household ? null : 0;
-    const titles = { bills: 'Bills', rent: 'Rent', upkeep: 'House', summary: 'Home', settings: 'Settings' };
+    const titles = { bills: 'Bills', rent: 'Rent', upkeep: 'House', summary: 'Home', personal: 'Personal', settings: 'Settings' };
     const houseAdd = { upcoming: ['new-task', 'Add upkeep task'], history: ['new-log', 'Log a repair'], appliances: ['new-appliance', 'Add appliance'], pros: ['new-contractor', 'Add contractor'], docs: ['new-doc', 'Add document'] };
-    const adds = { bills: ['new-bill', 'Add bill'], rent: ['new-rental', 'Add tenant'], upkeep: houseAdd[S.upkeepView] };
+    const adds = { bills: ['new-bill', 'Add bill'], rent: ['new-rental', 'Add tenant'], upkeep: houseAdd[S.upkeepView], personal: ['personal-add', 'Add expense'] };
     const addr = S.household && S.household.address ? S.household.address.split(',')[0] : (S.household ? S.household.name : '');
     const offline = !S.online || S.pending
       ? `<span class="status-dot">${!S.online ? 'Offline' : 'Syncing'}${S.pending ? ' · ' + S.pending + ' unsaved' : ''}</span>` : '';
-    const body = { bills: billsTab, rent: rentTab, upkeep: upkeepTab, summary: summaryTab, settings: settingsTab }[S.tab]();
-    const tabs = [['summary', 'Home'], ['bills', 'Bills'], ['rent', 'Rent'], ['upkeep', 'House'], ['settings', 'Settings']]
+    const body = { bills: billsTab, rent: rentTab, upkeep: upkeepTab, summary: summaryTab, personal: personalTab, settings: settingsTab }[S.tab]();
+    const tabs = [['summary', 'Home'], ['bills', 'Bills'], ['rent', 'Rent'], ['upkeep', 'House'], ['personal', 'Personal']]
       .map(([id, l]) => `<button class="tab" data-act="tab" data-tab="${id}" ${S.tab === id ? 'aria-current="page"' : ''}>${ICON[id]}<span>${l}</span></button>`).join('');
     const add = adds[S.tab];
     return `<div class="shell">
       <header class="topbar">
         <div class="topbar-row"><span class="eyebrow">${esc(addr)}</span>${offline}</div>
-        <div class="topbar-row"><h1 class="display">${esc(titles[S.tab])}</h1><span class="topbar-actions">${add ? `<button class="addbtn" data-act="${add[0]}" aria-label="${add[1]}">${ICON.plus}<span>Add</span></button>` : ''}</span></div>
+        <div class="topbar-row"><h1 class="display">${esc(titles[S.tab])}</h1><span class="topbar-actions"><button class="iconbtn gearbtn" data-act="tab" data-tab="settings" aria-label="Settings" title="Settings" ${S.tab === 'settings' ? 'aria-current="page"' : ''}>${ICON.settings}</button>${add ? `<button class="addbtn" data-act="${add[0]}" aria-label="${add[1]}">${ICON.plus}<span>Add</span></button>` : ''}</span></div>
       </header>
       <main class="main">${body}</main>
       <nav class="tabbar" aria-label="App sections"><div class="tabbar-inner">${tabs}</div></nav>
@@ -999,7 +1003,7 @@
   function billsTab() {
     const md = billMonth(S.month);
     const pct = md.total > 0 ? Math.round((md.paid / md.total) * 100) : 0;
-    const floors = S.units.filter((u) => isFloor(u.name));
+    const floors = S.units.filter((u) => isFloor(u.name) && !isPersonal(u.id));
     const unitChips = [['all', 'Everything'], ['shared', 'Shared']].concat(floors.map((u) => [u.id, u.name]))
       .map(([id, l]) => `<button class="chip" data-act="unit" data-unit="${esc(id)}" aria-pressed="${S.unit === id}">${esc(l)}</button>`).join('');
     const isPaid = (r) => !!(r.pay && r.pay.paid_at);
@@ -1416,7 +1420,7 @@
       ${mortgageCard()}`;
   }
   const TURNOVER = ['Repairs from move-out inspection', 'Paint touch-ups', 'Deep clean', 'Change locks', 'Test smoke & CO detectors', 'Take listing photos', 'List the unit', 'Schedule showings', 'Screen applicants', 'Sign lease & collect deposit'];
-  function vacantUnits() { return S.units.filter((u) => isFloor(u.name) && !u.exclude_from_tax && !S.rentals.some((r) => r.active !== false && r.unit_id === u.id)); }
+  function vacantUnits() { return S.units.filter((u) => isFloor(u.name) && !u.exclude_from_tax && !isPersonal(u.id) && !S.rentals.some((r) => r.active !== false && r.unit_id === u.id)); }
   function vacantCards() {
     return vacantUnits().map((u) => {
       const prev = S.rentals.filter((r) => r.unit_id === u.id).sort((a, b) => (b.move_out_on || '').localeCompare(a.move_out_on || ''))[0];
@@ -1888,6 +1892,48 @@
       <div class="ie-net"><div><span class="small muted">Net so far</span><strong class="display num ${netNow < 0 ? 'late-num' : 'ok-num'}">${sign(netNow)}</strong></div><div><span class="small muted">When all rent is in and bills are paid</span><strong class="display num ${netAll < 0 ? 'late-num' : 'ok-num'}">${sign(netAll)}</strong></div></div>
     </section>`;
   }
+  // ===== Personal expenses tab =====
+  const PERSONAL_PRESETS = [
+    ['Netflix', 'Streaming', '🎬'], ['Spotify', 'Streaming', '🎵'], ['Hulu', 'Streaming', '📺'], ['Disney+', 'Streaming', '🏰'], ['YouTube Premium', 'Streaming', '▶️'], ['HBO Max', 'Streaming', '📺'],
+    ['Amazon Prime', 'Subscriptions', '📦'], ['iCloud', 'Subscriptions', '☁️'], ['Phone', 'Internet & phone', '📱'], ['Gym', 'Health & fitness', '💪'],
+    ['Car insurance', 'Insurance', '🚗'], ['Car payment', 'Car', '🚙'], ['Credit card', 'Credit card', '💳']
+  ];
+  const PCAT_ICON = { Streaming: '🎬', Subscriptions: '🔁', 'Internet & phone': '📱', 'Health & fitness': '💪', Insurance: '🛡', Car: '🚙', 'Credit card': '💳', Shopping: '🛍', Electric: '⚡', Gas: '🔥', Water: '💧', Other: '🧾' };
+  function personalTab() {
+    const pu = personalUnit();
+    if (!pu) return `${monthNav()}<p class="notice">Setting up your Personal list… Pull down to refresh in a moment.</p>`;
+    const md = billMonth(S.month, true);
+    const rows = md.rows.filter((r) => r.b.unit_id === pu.id);
+    const isPaid = (r) => !!(r.pay && r.pay.paid_at);
+    const total = rows.reduce((t, r) => t + (r.amt || 0), 0), paidSum = rows.filter(isPaid).reduce((t, r) => t + (r.amt || 0), 0);
+    const yearly = rows.reduce((t, r) => t + (r.amt || 0) * (r.b.due_months && r.b.due_months.length ? r.b.due_months.length / 12 : 1), 0) * 12;
+    const g = new Map(); rows.forEach((r) => { const c = r.b.category || 'Other'; g.set(c, (g.get(c) || 0) + (r.amt || 0)); });
+    const cats = Array.from(g, ([name, v]) => ({ name, v })).sort((a, b) => b.v - a.v);
+    const max = Math.max(1, ...cats.map((c) => c.v));
+    const have = new Set(S.bills.filter((b) => b.active !== false && b.unit_id === pu.id).map((b) => b.name.toLowerCase()));
+    const presets = PERSONAL_PRESETS.filter(([n]) => !have.has(n.toLowerCase()));
+    const open = rows.filter((r) => !isPaid(r)), done = rows.filter(isPaid);
+    const homes = S.units.filter((u) => u.exclude_from_tax && u.id !== pu.id);
+    const homeRows = md.rows.filter((r) => homes.some((u) => u.id === r.b.unit_id));
+    const homeTotal = homeRows.reduce((t, r) => t + (r.amt || 0), 0);
+    const hero = `<section class="hero phero" aria-label="Personal spending">
+        <div class="row between" style="align-items:flex-end"><div class="stack" style="gap:2px"><span class="label">Personal · ${monthLabel(S.month, true)}</span><span class="big display num">${money(total)}</span></div><span class="pct display">${total ? Math.round((paidSum / total) * 100) : 0}%</span></div>
+        <div class="track" role="progressbar" aria-label="Paid so far" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${total ? Math.round((paidSum / total) * 100) : 0}"><div style="width:${total ? Math.round((paidSum / total) * 100) : 0}%"></div></div>
+        <div class="foot"><span>${money(paidSum)} paid · ${money(total - paidSum)} left</span><span>~${money0(yearly)} a year</span></div>
+      </section>`;
+    const catCard = cats.length ? `<section class="card" aria-label="Personal by category"><h2>By category</h2>${cats.map((c) => `<div class="stack" style="gap:6px"><div class="row between small"><span>${PCAT_ICON[c.name] || '🧾'} ${esc(c.name)}</span><strong class="num">${money(c.v)}</strong></div><div class="meter"><div style="width:${Math.max(3, Math.round((c.v / max) * 100))}%"></div></div></div>`).join('')}</section>` : '';
+    const chipList = `<div class="pchips">${presets.map(([n, c, i]) => `<button type="button" class="chip pchip" data-act="personal-add" data-name="${esc(n)}" data-cat="${esc(c)}">${i} ${esc(n)}</button>`).join('')}<button type="button" class="chip pchip" data-act="personal-add" data-name="" data-cat="Other">＋ Something else</button></div>`;
+    const chips = !rows.length ? `<section class="card" aria-label="Quick add"><h2>Quick add</h2><p class="small muted" style="margin:-6px 0 0">Tap one, type the amount, save.</p>${chipList}</section>`
+      : fold('p-add', 'Add more', '<p class="small muted" style="margin:0">Tap one, type the amount, save.</p>' + chipList, false);
+    const list = (rs) => `<ul class="bills">${rs.map(billCard).join('')}</ul>`;
+    const body = !rows.length
+      ? emptyState('empty', 'No personal expenses yet', 'Add Netflix, your phone, the gym, car insurance… They stay separate from the house.', '')
+      : (open.length ? `<h2 class="section-h">To pay <span class="count">${open.length}</span></h2>${list(open)}` : emptyState('done', 'All paid', 'Every personal expense for ' + monthLabel(S.month).split(' ')[0] + ' is paid.'))
+        + (done.length ? `<details class="paidfold" data-fold="p-paid" ${isOpen('p-paid', false) ? 'open' : ''}><summary><span>Paid <span class="count">${done.length}</span></span><span class="num muted">${money(paidSum)}</span><span class="chev" aria-hidden="true"></span></summary><ul class="prows">${done.map(paidRow).join('')}</ul></details>` : '');
+    const homeNote = homeRows.length ? `<p class="small muted" style="margin:0">${esc(homes.map((u) => u.name).join(', '))} bills (${money(homeTotal)} this month) are on the Bills tab.</p>` : '';
+    return `${monthNav()}${hero}${rows.length ? body + chips : chips + body}${catCard}${homeNote}
+      <p class="small muted" style="margin:0">Personal expenses aren’t counted in the rental totals or the tax report.</p>`;
+  }
   function summaryTabRaw() {
     const sp = billSplit(S.month);
     const md = { paid: sp.rentalPaid };
@@ -1902,7 +1948,7 @@
       return { k, inc, out, net: inc - out };
     });
     const max = Math.max(1, ...rows.map((r) => Math.max(r.inc, r.out)));
-    const all = S.bills.filter((b) => b.active !== false && !b.escrow && dueInMonth(b, S.month));
+    const all = S.bills.filter((b) => b.active !== false && !b.escrow && dueInMonth(b, S.month) && !isPersonal(b.unit_id));
     const group = (keyFn) => {
       const m = new Map();
       all.forEach((b) => {
@@ -2130,7 +2176,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.11</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.12</p>`;
   }
 
   function importCard() {
@@ -2501,7 +2547,7 @@ function setup() {
 
   function billSheet(sh) {
     const isNew = sh.type === 'new-bill';
-    const b = isNew ? { unit_id: wholeId(), category: 'Other', amount_type: 'variable' } : S.bills.find((x) => x.id === sh.id);
+    const b = isNew ? Object.assign({ unit_id: wholeId(), category: 'Other', amount_type: 'variable' }, sh.preset || {}) : S.bills.find((x) => x.id === sh.id);
     if (!b) return '';
     const pay = isNew ? {} : (getPay(b, S.month) || {});
     const sc = S.scan && (isNew ? !S.scan.billId : S.scan.billId === b.id) ? S.scan : null;
@@ -2754,6 +2800,13 @@ function setup() {
       case 'ask-suggest': askQuestion(el.dataset.q); break;
       case 'ask-apply': { const m = (S.askLog || [])[+el.dataset.i]; if (!m || m.applied) break; const acts = m.actions.filter((a) => describeAction(a).ok); acts.forEach(applyAction); m.applied = 'yes'; render(); feedback(); toast(acts.length === 1 ? 'Saved' : 'Saved ' + acts.length + ' items'); break; }
       case 'ask-retry': { const i = +el.dataset.i; const m = (S.askLog || [])[i]; if (!m || !m.retry) break; S.askLog = S.askLog.slice(0, i - 1); askQuestion(m.retry); break; }
+      case 'personal-add': {
+        const pu = personalUnit(); if (!pu) { toast('Personal list isn’t ready yet. Pull down to refresh.'); break; }
+        S.sheet = { type: 'new-bill', preset: { name: el.dataset.name || '', category: el.dataset.cat || 'Other', unit_id: pu.id, amount_type: 'fixed', autopay: true, due_day: null } };
+        S.sheetErr = ''; S.deleteArm = false; FX.sheetEnter = true; render();
+        setTimeout(() => { const n = document.getElementById(el.dataset.name ? 'b-def' : 'b-name'); if (n) n.focus(); }, 300);
+        break;
+      }
       case 'tour-next': if (S.tour < TOUR.length - 1) { S.tour++; render(); } else endTour(); break;
       case 'tour-skip': endTour(); break;
       case 'tour-again': S.tour = 0; window.scrollTo(0, 0); render(); break;
@@ -2984,7 +3037,7 @@ function setup() {
         savePayment(nb, S.month, Object.assign({ amount: num(val('p_amount')), paid_at: paidAt, method: val('p_method') || null, confirmation: val('p_confirmation') || null, note: val('p_note') || null }, extra));
         if (extra.balance_after != null) { nb.loan_balance = extra.balance_after; saveBill(nb); }
       }
-      S.sheet = null; if (isNew) { S.tab = 'bills'; } render(); toast(isNew ? 'Bill added' : 'Saved');
+      S.sheet = null; if (isNew) { S.tab = isPersonal(nb.unit_id) ? 'personal' : 'bills'; } render(); toast(isNew ? (isPersonal(nb.unit_id) ? 'Added to Personal' : 'Bill added') : 'Saved');
     } else if (kind === 'rental') {
       const isNew = S.sheet.type === 'new-rental';
       const r = isNew ? { id: uuid(), household_id: S.household.id, active: true, created_at: new Date().toISOString() } : S.rentals.find((x) => x.id === S.sheet.id);
