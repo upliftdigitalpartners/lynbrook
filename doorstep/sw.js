@@ -1,5 +1,5 @@
 // Service worker: offline app shell + push notifications.
-const VERSION = 'v1.2.0';
+const VERSION = 'v1.3.0';
 const CACHE = 'doorstep-' + VERSION;
 const SHELL = [
   './',

@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Doorstep pamphlet</title>
+<style>
+@font-face { font-family: 'Inter'; src: url('../fonts/inter.woff2') format('woff2'); font-weight: 100 900; }
+@font-face { font-family: 'Fraunces'; src: url('../fonts/fraunces.woff2') format('woff2'); font-weight: 100 900; }
+@page { size: Letter; margin: 0; }
+* { box-sizing: border-box; }
+:root { --blue: #2F4BA8; --navy: #1A2A66; --sky: #DCE4FB; --cream: #F6F3EC; --ink: #14211C; --muted: #4C5752; --gold: #C9A15A; --green: #1E6B4A; --rust: #C2552B; }
+body { margin: 0; font-family: Inter, sans-serif; color: var(--ink); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.page { width: 8.5in; height: 11in; position: relative; overflow: hidden; page-break-after: always; background: var(--cream); }
+.page:last-child { page-break-after: auto; }
+h1, h2, h3, .serif { font-family: Fraunces, Georgia, serif; }
+.phone { position: absolute; width: 2.35in; padding: 0.075in; border-radius: 0.36in; background: #0E1430; box-shadow: 0 30px 60px -24px rgba(14,20,48,.55), inset 0 0 0 2px #2A3566; }
+.phone img { display: block; width: 100%; border-radius: 0.29in; }
+.phone::before { content: ''; position: absolute; top: 0.13in; left: 50%; transform: translateX(-50%); width: 0.62in; height: 0.13in; border-radius: 99px; background: #0E1430; z-index: 2; }
+.phone.sm { width: 1.95in; }
+.kicker { font-size: 10.5pt; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--gold); }
+.pad { position: absolute; inset: 0.6in 0.6in; }
+.callout { position: absolute; background: #fff; border-radius: 14px; padding: 9px 12px; font-size: 9.5pt; line-height: 1.35; box-shadow: 0 12px 26px -14px rgba(14,20,48,.45); border: 1px solid #E6E1D6; max-width: 2.05in; }
+.callout b { display: block; font-size: 10.5pt; color: var(--navy); margin-bottom: 2px; }
+.callout .dot { position: absolute; width: 12px; height: 12px; border-radius: 99px; background: var(--gold); box-shadow: 0 0 0 4px rgba(201,161,90,.3); }
+.pnum { position: absolute; bottom: 0.32in; right: 0.6in; font-size: 9pt; color: #8A918D; }
+.brandmark { position: absolute; bottom: 0.3in; left: 0.6in; display: flex; align-items: center; gap: 8px; font-family: Fraunces, serif; font-weight: 700; font-size: 11pt; color: var(--navy); }
+.brandmark img { width: 20px; height: 20px; border-radius: 5px; }
+.lead { font-size: 13pt; line-height: 1.5; color: var(--muted); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 99px; background: #fff; border: 1px solid #E6E1D6; font-size: 10pt; font-weight: 600; margin: 0 6px 6px 0; }
+.blob { position: absolute; border-radius: 50%; filter: blur(2px); }
+
+/* ---------- cover ---------- */
+.cover { background: radial-gradient(120% 80% at 80% 10%, #3D5FC4 0%, var(--blue) 35%, var(--navy) 100%); color: #fff; }
+.cover .rays { position: absolute; inset: 0; background: repeating-conic-gradient(from 200deg at 80% 0%, rgba(255,255,255,.06) 0deg 6deg, transparent 6deg 18deg); }
+.cover h1 { position: absolute; left: 0.6in; top: 1.35in; margin: 0; font-size: 50pt; line-height: 1.02; letter-spacing: -1px; max-width: 5.2in; }
+.cover h1 em { font-style: normal; color: #F2D58A; }
+.cover .sub { position: absolute; left: 0.6in; top: 4.25in; max-width: 4.2in; font-size: 14pt; line-height: 1.5; color: #D6DEFA; }
+.cover .logo { position: absolute; left: 0.6in; top: 0.55in; display: flex; align-items: center; gap: 12px; font-family: Fraunces, serif; font-size: 22pt; font-weight: 700; }
+.cover .logo img { width: 44px; height: 44px; border-radius: 11px; box-shadow: 0 6px 16px rgba(0,0,0,.25); }
+.cover .tag { position: absolute; left: 0.6in; top: 5.3in; display: flex; gap: 8px; flex-wrap: wrap; max-width: 3.35in; }
+.cover .tag span { padding: 7px 13px; border-radius: 99px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); font-size: 10.5pt; font-weight: 600; }
+.door { position: absolute; left: 0.6in; bottom: 0.55in; width: 3.6in; }
+.cover .free { position: absolute; right: 0.55in; top: 0.5in; width: 1.15in; height: 1.15in; border-radius: 50%; background: #F2D58A; color: var(--navy); display: flex; flex-direction: column; align-items: center; justify-content: center; transform: rotate(12deg); font-family: Fraunces, serif; font-weight: 800; box-shadow: 0 10px 24px rgba(0,0,0,.25); }
+.cover .free b { font-size: 24pt; line-height: 1; } .cover .free span { font-size: 8.5pt; letter-spacing: .08em; text-transform: uppercase; font-family: Inter, sans-serif; }
+
+/* ---------- section pages ---------- */
+.band { position: absolute; left: 0; right: 0; top: 0; height: 3.15in; }
+.secttl { position: absolute; left: 0.6in; top: 0.55in; max-width: 4.6in; }
+.secttl h2 { margin: 6px 0 8px; font-size: 32pt; line-height: 1.05; letter-spacing: -.5px; }
+.list { position: absolute; font-size: 11pt; line-height: 1.5; color: var(--muted); }
+.list li { margin-bottom: 8px; } .list b { color: var(--ink); }
+.quote { position: absolute; background: var(--navy); color: #fff; border-radius: 20px; padding: 16px 18px; font-family: Fraunces, serif; font-size: 14pt; line-height: 1.35; }
+.quote small { display: block; font-family: Inter, sans-serif; font-size: 9pt; color: #AFC0F2; margin-top: 6px; }
+.bubble { position: absolute; background: #fff; border-radius: 18px 18px 18px 4px; padding: 10px 14px; font-size: 10.5pt; box-shadow: 0 12px 26px -14px rgba(14,20,48,.45); border: 1px solid #E6E1D6; }
+.bubble.r { border-radius: 18px 18px 4px 18px; background: var(--blue); color: #fff; border: 0; }
+
+/* ---------- start page ---------- */
+.steps { position: absolute; left: 0.6in; right: 0.6in; top: 2.25in; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.step { background: #fff; border-radius: 18px; padding: 14px 16px; border: 1px solid #E6E1D6; display: flex; gap: 12px; }
+.step .n { flex: none; width: 34px; height: 34px; border-radius: 99px; background: var(--blue); color: #fff; font-weight: 800; display: flex; align-items: center; justify-content: center; font-size: 13pt; }
+.step h3 { margin: 2px 0 4px; font-size: 13pt; }
+.step p { margin: 0; font-size: 9.8pt; line-height: 1.45; color: var(--muted); }
+.cta { position: absolute; left: 0.6in; right: 0.6in; bottom: 0.75in; height: 2.55in; border-radius: 26px; background: radial-gradient(120% 120% at 0% 0%, #3D5FC4, var(--navy)); color: #fff; display: flex; align-items: center; gap: 26px; padding: 0 30px; overflow: hidden; }
+.cta h2 { margin: 0 0 8px; font-size: 28pt; line-height: 1.05; }
+.cta p { margin: 0; color: #D6DEFA; font-size: 11pt; line-height: 1.5; }
+.cta .url { display: inline-block; margin-top: 12px; padding: 8px 14px; border-radius: 12px; background: rgba(255,255,255,.12); font-weight: 700; font-size: 10.5pt; }
+.qr { flex: none; width: 1.75in; height: 1.75in; background: #fff; border-radius: 18px; padding: 12px; }
+.qr img { width: 100%; height: 100%; }
+
+/* ===== PRINT VERSION: 1/8 in bleed on every side (trim size stays 8.5 x 11 in) ===== */
+@page { size: 8.75in 11.25in; margin: 0; }
+.page { width: 8.75in; height: 11.25in; }
+.page > * { translate: 0.125in 0.125in; }
+.page > .rays { translate: none; }
+.page > .band { translate: none; height: calc(3.15in + 0.125in); }
+</style>
+</head>
+<body>
+
+<!-- ================= 1. COVER ================= -->
+<section class="page cover">
+  <div class="rays"></div>
+  <div class="logo"><img src="img/logo.png" alt="">Doorstep</div>
+  <div class="free"><b>Free</b><span>no ads</span></div>
+  <h1>Rent, bills &amp; repairs. <em>Right at your doorstep.</em></h1>
+  <p class="sub">The simple app for landlords with a few units. Know who paid, never miss a bill, and let tenants report repairs. All in your pocket.</p>
+  <div class="tag"><span>🔑 Rent</span><span>🧾 Bills</span><span>🔧 Repairs</span><span>📊 Taxes</span><span>✦ Ask in plain words</span><span>👤 Personal</span></div>
+  <svg class="door" viewBox="0 0 360 250" aria-hidden="true">
+    <ellipse cx="150" cy="238" rx="150" ry="10" fill="rgba(0,0,0,.18)"/>
+    <rect x="20" y="226" width="260" height="14" rx="5" fill="#C9A15A"/>
+    <rect x="70" y="30" width="160" height="198" rx="10" fill="#F6F3EC"/>
+    <rect x="70" y="30" width="160" height="198" rx="10" fill="none" stroke="#DCD4C4" stroke-width="3"/>
+    <rect x="88" y="48" width="124" height="70" rx="6" fill="#A9BCF5"/>
+    <path d="M150 48 v70 M88 83 h124" stroke="#F6F3EC" stroke-width="4"/>
+    <rect x="88" y="132" width="124" height="80" rx="6" fill="none" stroke="#DCD4C4" stroke-width="3"/>
+    <circle cx="206" cy="150" r="7" fill="#C9A15A"/>
+    <path d="M58 30 L150 0 L242 30 Z" fill="#26305E"/>
+    <g transform="translate(250 160)"><rect x="0" y="22" width="44" height="44" rx="8" fill="#1E6B4A"/><path d="M8 22c0-18 8-26 14-30 6 4 14 12 14 30z" fill="#3A8A64"/></g>
+    <g transform="translate(-6 168)"><rect x="18" y="30" width="36" height="34" rx="7" fill="#C2552B"/><circle cx="36" cy="22" r="18" fill="#E2A35E"/></g>
+  </svg>
+  <div class="phone" style="right:2.05in;top:5.25in;width:2.2in;transform:rotate(-7deg)"><img src="img/bills.png" alt=""></div>
+  <div class="phone" style="right:0.45in;top:4.55in;width:2.35in;transform:rotate(5deg)"><img src="img/home.png" alt=""></div>
+</section>
+
+<!-- ================= 2. HOME ================= -->
+<section class="page">
+  <div class="band" style="background:linear-gradient(160deg,#DCE4FB,#F6F3EC)"></div>
+  <div class="secttl"><div class="kicker">01 · Home</div><h2 class="serif">Your whole month in one sentence.</h2>
+    <p class="lead">Open the app and read it like a note from a friend: what came in, what went out, and who still owes you.</p></div>
+  <div class="phone" style="left:0.65in;top:3.45in"><img src="img/home.png" alt=""></div>
+  <div class="phone" style="left:3.2in;top:3.15in"><img src="img/income.png" alt=""></div>
+  <div class="phone" style="left:5.75in;top:3.45in"><img src="img/flow.png" alt=""></div>
+  <div class="callout" style="left:0.45in;top:8.75in"><span class="dot" style="right:16px;top:-6px"></span><b>Month in a sentence</b>“You’re $675 short so far. James Lee still owes $1,450.”</div>
+  <div class="callout" style="left:3.05in;top:8.95in"><span class="dot" style="right:16px;top:-6px"></span><b>Income &amp; expenses</b>Rent per unit on one side, every bill by category on the other, plus your net.</div>
+  <div class="callout" style="left:5.6in;top:8.75in"><span class="dot" style="left:16px;top:-6px"></span><b>Where the rent goes</b>Ribbons show how every $100 of rent splits into mortgage, heat, taxes… and what you keep.</div>
+  <div class="brandmark"><img src="img/logo.png" alt="">Doorstep</div><div class="pnum">2</div>
+</section>
+
+<!-- ================= 3. BILLS ================= -->
+<section class="page">
+  <div class="band" style="background:linear-gradient(160deg,#F4ECDC,#F6F3EC)"></div>
+  <div class="secttl"><div class="kicker">02 · Bills</div><h2 class="serif">Never pay a late fee again.</h2>
+    <p class="lead">Every utility, mortgage and tax bill with due dates in plain words, reminders on your phone, and a calendar of the whole month.</p></div>
+  <div class="phone" style="left:0.6in;top:3.4in;transform:rotate(-3deg)"><img src="img/bills-list.png" alt=""></div>
+  <div class="phone" style="left:3.1in;top:3.25in"><img src="img/calendar.png" alt=""></div>
+  <div class="phone" style="left:5.6in;top:3.4in;transform:rotate(3deg)"><img src="img/bill-detail.png" alt=""></div>
+  <div class="callout" style="left:0.5in;top:8.8in"><span class="dot" style="right:18px;top:-6px"></span><b>Swipe to pay</b>Swipe a bill right, or tap ✓. “Overdue · 8 days late” stands out first. Undo if you slip.</div>
+  <div class="callout" style="left:3.1in;top:8.95in"><span class="dot" style="right:18px;top:-6px"></span><b>Month calendar</b>Colored dots for paid, due, late, rent and upkeep. Tap a day to see what’s due.</div>
+  <div class="callout" style="left:5.55in;top:8.8in"><span class="dot" style="left:18px;top:-6px"></span><b>12-month history</b>See the trend, spot a spike, and slide to mark paid.</div>
+  <div class="brandmark"><img src="img/logo.png" alt="">Doorstep</div><div class="pnum">3</div>
+</section>
+
+<!-- ================= 4. RENT + TENANTS ================= -->
+<section class="page">
+  <div class="band" style="background:linear-gradient(160deg,#E3EFE8,#F6F3EC)"></div>
+  <div class="secttl"><div class="kicker">03 · Rent &amp; tenants</div><h2 class="serif">Rent without the chasing.</h2>
+    <p class="lead">Each unit gets a card with a 12-month on-time record. Tenants get their own private page with no app to install.</p></div>
+  <div class="phone sm" style="left:0.6in;top:3.15in"><img src="img/rent-history.png" alt=""></div>
+  <div class="phone sm" style="left:2.75in;top:3.3in"><img src="img/rent.png" alt=""></div>
+  <div style="position:absolute;left:4.95in;top:3.2in;width:0;height:5.2in;border-left:2px dashed #C9C2B3"></div>
+  <div style="position:absolute;left:5.2in;top:3.2in;font-size:9pt;font-weight:800;letter-spacing:.12em;color:#8A918D">THE TENANT’S PAGE</div>
+  <div class="phone sm" style="left:5.4in;top:3.45in;transform:rotate(3deg)"><img src="img/tenant.png" alt=""></div>
+  <div class="bubble r" style="left:5.35in;top:7.98in">“I paid $1,450 by Zelle”</div>
+  <div class="bubble" style="left:2.1in;top:7.92in">James says rent is paid. <b>Confirm</b> ✓</div>
+  <ul class="list" style="left:0.6in;top:8.6in;width:7.3in;columns:2;column-gap:26px;padding-left:18px;margin:0">
+    <li><b>One tap “✓ Got $1,450”</b> when rent arrives. Partial payments too.</li>
+    <li><b>“Text James”</b> opens a polite reminder, already written.</li>
+    <li><b>Zelle emails</b> can mark rent received automatically.</li>
+    <li><b>Tenants say “I’ve paid”</b> and you confirm with one tap.</li>
+    <li><b>Repair requests with photos</b> go straight to your phone.</li>
+    <li><b>Lease dates, deposits, move-out checklists</b> all in one place.</li>
+  </ul>
+  <div class="brandmark"><img src="img/logo.png" alt="">Doorstep</div><div class="pnum">4</div>
+</section>
+
+<!-- ================= 5. HOUSE, PERSONAL, ASK ================= -->
+<section class="page">
+  <div class="band" style="background:linear-gradient(160deg,#EEE8F6,#F6F3EC)"></div>
+  <div class="secttl"><div class="kicker">04 · And everything else</div><h2 class="serif">The house, your own bills, and a helper.</h2>
+    <p class="lead">Upkeep that reminds you, personal subscriptions kept separate, and an assistant that understands plain English.</p></div>
+  <div class="phone" style="left:0.6in;top:3.4in"><img src="img/house.png" alt=""></div>
+  <div class="phone" style="left:3.1in;top:3.25in"><img src="img/personal.png" alt=""></div>
+  <div class="phone" style="left:5.6in;top:3.4in"><img src="img/ask.png" alt=""></div>
+  <div class="callout" style="left:0.5in;top:8.8in"><span class="dot" style="right:18px;top:-6px"></span><b>🔧 House care</b>“Do next” jobs with Done or Snooze. Snap the receipt and it fills in the cost.</div>
+  <div class="callout" style="left:3.05in;top:8.95in"><span class="dot" style="right:18px;top:-6px"></span><b>👤 Personal</b>Netflix, phone, gym… one tap to add. Never mixed into rental totals or taxes.</div>
+  <div class="callout" style="left:5.55in;top:8.8in"><span class="dot" style="left:18px;top:-6px"></span><b>✦ Ask or add</b>“paid electric $96”, “What did heat cost last winter?” Speak, type or scan a bill.</div>
+  <div class="brandmark"><img src="img/logo.png" alt="">Doorstep</div><div class="pnum">5</div>
+</section>
+
+<!-- ================= 6. MORE + GET STARTED ================= -->
+<section class="page">
+  <div class="secttl" style="top:0.5in;max-width:7.3in"><div class="kicker">05 · Get started</div><h2 class="serif">Set up in five minutes.</h2>
+    <div style="margin-top:4px"><span class="chip">📊 Tax report, Schedule E style</span><span class="chip">🏘 Up to 5 properties</span><span class="chip">👥 Invite a co-owner</span><span class="chip">🌙 Light &amp; dark</span><span class="chip">Aa Bigger text</span><span class="chip">🧩 Customize tabs</span><span class="chip">📶 Works offline</span><span class="chip">🔒 Download or delete your data</span></div></div>
+  <div class="steps">
+    <div class="step"><div class="n">1</div><div><h3 class="serif">Try the demo</h3><p>Tap “Try the demo” to explore a sample duplex with a year of history. It resets every night.</p></div></div>
+    <div class="step"><div class="n">2</div><div><h3 class="serif">Create your account</h3><p>Email and password. Then name your property and list your units.</p></div></div>
+    <div class="step"><div class="n">3</div><div><h3 class="serif">Add bills &amp; tenants</h3><p>Bills tab › + Add for each bill and due day. Rent tab › Details for each tenant and rent.</p></div></div>
+    <div class="step"><div class="n">4</div><div><h3 class="serif">Put it on your phone</h3><p>iPhone: Share › Add to Home Screen. Android: ⋮ › Install app. Then turn on reminders.</p></div></div>
+    <div class="step"><div class="n">5</div><div><h3 class="serif">Send tenant links</h3><p>Each tenant gets a private page: what’s due, how to pay, “I’ve paid”, and repair requests.</p></div></div>
+    <div class="step"><div class="n">6</div><div><h3 class="serif">Let email do the typing</h3><p>Optional: connect Gmail so bills and Zelle rent fill themselves in.</p></div></div>
+  </div>
+  <div class="cta">
+    <div class="qr"><img src="img/qr.svg" alt="QR code to open Doorstep"></div>
+    <div><h2 class="serif">Open your door to easier renting.</h2>
+      <p>Scan the code, tap <b>Try the demo</b>, and see your month in one sentence. Free, with no ads and no bank login.</p>
+      <span class="url">upliftdigitalpartners.github.io/lynbrook/doorstep</span></div>
+  </div>
+  <div class="brandmark" style="bottom:0.28in"><img src="img/logo.png" alt="">Doorstep</div><div class="pnum" style="bottom:0.3in">6</div>
+</section>
+
+</body>
+</html>

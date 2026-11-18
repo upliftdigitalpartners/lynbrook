@@ -886,6 +886,16 @@
         <details class="lp-q"><summary>Who can see my data?</summary><p class="small">Only people you invite to your property. Tenants see only their own rent and requests. You can download or delete everything any time.</p></details>
         <details class="lp-q"><summary>Do I have to connect my bank?</summary><p class="small">No. You can record payments yourself, or forward bill and Zelle emails from Gmail.</p></details>
         <details class="lp-q"><summary>Can my partner or co-owner use it?</summary><p class="small">Yes. They create their own account and join with your house code.</p></details></section>
+      <section class="lp-sec" id="contact"><div class="card" style="max-width:520px;margin:0 auto">
+        <h2 class="display" style="margin:0">Contact us</h2>
+        <p class="small muted" style="margin:-4px 0 0">Questions before you sign up? Send a note.</p>
+        <form class="stack" data-form="feedback">
+          <div class="field"><label for="fb-msg">Message</label><textarea class="input" id="fb-msg" name="message" maxlength="4000" required placeholder="A question, an idea or a problem"></textarea></div>
+          <div class="field"><label for="fb-email">Your email <span class="muted">(so we can reply)</span></label><input class="input" id="fb-email" name="email" type="email" maxlength="200" value="${esc(S.user && !isDemo() ? S.user.email : '')}" autocomplete="email"></div>
+          ${S.fbMsg ? `<p class="ok" role="status">${esc(S.fbMsg)}</p>` : ''}${S.fbErr ? `<p class="err" role="alert">${esc(S.fbErr)}</p>` : ''}
+          <button class="btn primary-soft" type="submit">Send</button>
+        </form>
+      </div></section>
       <section class="lp-sec" id="signin"><div class="card ds-auth" style="margin:0 auto">
         <h2 class="display" style="margin:0">${up ? 'Create your free account' : 'Sign in'}</h2>
         <form class="stack" data-form="auth" novalidate>
@@ -894,11 +904,13 @@
           <div class="field"><label for="a-pass">Password ${up ? '<span class="muted">(8+ characters)</span>' : ''}</label><input class="input" id="a-pass" name="password" type="password" minlength="8" autocomplete="${up ? 'new-password' : 'current-password'}" autocapitalize="off" spellcheck="false" required></div>
           ${S.authErr ? `<p class="err" role="alert">${esc(S.authErr)}</p>` : ''}
           <button class="btn primary block" type="submit" ${S.busy ? 'disabled' : ''}>${up ? 'Create my account' : 'Sign in'}</button>
+          ${!up ? '<button type="button" class="linkbtn" data-act="forgot" style="align-self:center">Forgot password?</button>' : ''}
+          ${S.authMsg ? `<p class="ok" role="status">${esc(S.authMsg)}</p>` : ''}
           ${up ? '<p class="small muted" style="margin:0">By creating an account you agree to the <a href="terms.html">Terms</a> and <a href="privacy.html">Privacy policy</a>.</p>' : ''}
         </form>
         <button type="button" class="btn block" data-act="demo-login" ${S.busy ? 'disabled' : ''}>👀 Or try the demo</button>
       </div></section>
-      <footer class="lp-foot"><span>© ${new Date().getFullYear()} Doorstep</span><span><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a></span></footer>
+      <footer class="lp-foot"><span>© ${new Date().getFullYear()} Doorstep</span><span><a href="#contact">Contact</a> · <a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a></span></footer>
     </div>`;
   }
   function recoveryView() {
@@ -2311,6 +2323,16 @@
         </form>`}
         ${S.household && S.household.claim_code ? `<p class="lab small" style="margin:6px 0 0">Invite a co-owner or family member</p><p class="small" style="margin:0">They create a free account, then enter this house code: <button type="button" class="acct" data-act="copy" data-text="${esc(S.household.claim_code)}"><strong class="num">${esc(S.household.claim_code)}</strong> ${ICON.copy}</button></p>` : ''}
       </section>
+      <section class="card" aria-label="Send feedback">
+        <h2>Send feedback</h2>
+        <p class="small muted" style="margin:-6px 0 0">Questions, ideas or problems go straight to the Doorstep team.</p>
+        <form class="stack" data-form="feedback">
+          <div class="field"><label for="fb-msg">Message</label><textarea class="input" id="fb-msg" name="message" maxlength="4000" required placeholder="A question, an idea or a problem"></textarea></div>
+          <div class="field"><label for="fb-email">Your email <span class="muted">(so we can reply)</span></label><input class="input" id="fb-email" name="email" type="email" maxlength="200" value="${esc(S.user && !isDemo() ? S.user.email : '')}" autocomplete="email"></div>
+          ${S.fbMsg ? `<p class="ok" role="status">${esc(S.fbMsg)}</p>` : ''}${S.fbErr ? `<p class="err" role="alert">${esc(S.fbErr)}</p>` : ''}
+          <button class="btn primary-soft" type="submit">Send</button>
+        </form>
+      </section>
       <section class="card" aria-label="Your data">
         <h2>Your data</h2>
         <p class="small muted" style="margin:0">Download everything for ${esc(S.household ? S.household.name : 'this property')} as a file you can keep or move elsewhere.</p>
@@ -2971,7 +2993,7 @@ function setup() {
         const r = await sb.auth.signInWithPassword({ email: CFG.DEMO_EMAIL, password: CFG.DEMO_PASSWORD });
         S.busy = false; if (r.error) S.authErr = 'The demo is being refreshed. Try again in a minute.'; render(); break;
       }
-      case 'auth-mode': S.authMode = el.dataset.v; S.authErr = ''; render(); if (el.dataset.jump) { const f = document.getElementById('signin'); if (f) f.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth' }); setTimeout(() => { const n = document.getElementById('a-email'); if (n) n.focus({ preventScroll: true }); }, 350); } break;
+      case 'auth-mode': S.authMode = el.dataset.v; S.authErr = ''; S.authMsg = ''; render(); if (el.dataset.jump) { const f = document.getElementById('signin'); if (f) f.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth' }); setTimeout(() => { const n = document.getElementById('a-email'); if (n) n.focus({ preventScroll: true }); }, 350); } break;
       case 'demo-signup': S.authMode = 'signup'; await sb.auth.signOut(); break;
       case 'houses-open': S.sheet = { type: 'houses' }; S.sheetErr = ''; FX.sheetEnter = true; render(); break;
       case 'house-switch': {
@@ -3026,6 +3048,18 @@ function setup() {
           S.user = null; S.household = null; S.view = 'auth'; render(); toast('Your account was deleted.');
         } catch (e) { toast(friendlyErr(e, 'delete the account')); }
         break;
+      }
+      case 'forgot': {
+        const n = document.getElementById('a-email'); const email = n ? n.value.trim() : '';
+        S.authErr = ''; S.authMsg = '';
+        if (!/^\S+@\S+\.\S+$/.test(email)) { S.authErr = 'Type your email above, then tap “Forgot password?” again.'; render(); break; }
+        S.busy = true; render();
+        const r = await sb.auth.resetPasswordForEmail(email, { redirectTo: CFG.APP_URL });
+        S.busy = false;
+        if (r.error && !/rate|limit|seconds/i.test(r.error.message)) S.authErr = friendlyErr(r.error, 'send the email');
+        else if (r.error) S.authErr = 'Too many reset emails right now. Please try again in an hour.';
+        else S.authMsg = 'If that email has an account, a reset link is on its way. Check your inbox and spam.';
+        render(); const f = document.getElementById('a-email'); if (f) f.value = email; break;
       }
       case 'tour-next': if (S.tour < TOUR.length - 1) { S.tour++; render(); } else endTour(); break;
       case 'tour-skip': endTour(); break;
@@ -3242,6 +3276,14 @@ function setup() {
       try { localStorage.setItem('ds-house', r.data); } catch (_) {}
       S.sheet = null; S.month = monthKey(new Date()); S.unit = 'all'; S.tab = 'summary'; S.view = 'loading'; render();
       await loadAll(); toast('Added ' + val('name') + '. Add its bills and tenants.');
+    } else if (kind === 'feedback') {
+      S.fbMsg = ''; S.fbErr = '';
+      const message = String(fd.get('message') || '').trim();
+      if (!message) { S.fbErr = 'Write a message first.'; return render(); }
+      const r = await sb.rpc('send_feedback', { p_message: message, p_email: String(fd.get('email') || '').trim() || null, p_page: S.view === 'app' ? 'settings' : 'landing' });
+      if (r.error) S.fbErr = /tomorrow|later|first/i.test(r.error.message) ? r.error.message : friendlyErr(r.error, 'send it');
+      else { S.fbMsg = 'Thanks! Your message was sent.'; form.reset(); }
+      render();
     } else if (kind === 'create-house') {
       S.joinErr = ''; S.busy = true; render();
       const units = String(val('units') || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 12);
@@ -3698,6 +3740,20 @@ function setup() {
       }
       ind.classList.remove('spinning', 'ready'); ind.style.transform = 'translate(-50%,-50px)'; ind.style.opacity = 0; pull = 0;
     });
+  })();
+
+  // ---------- error reports (a few per visit, to the app_errors table) ----------
+  (function errorReports() {
+    let sent = 0; const seen = new Set();
+    function report(message, stack, file) {
+      if (sent >= 5 || !message || seen.has(message)) return;
+      if (file && !String(file).startsWith(location.origin)) return; // extensions and other sites
+      if (/ResizeObserver|Script error\.?$|NetworkError|Failed to fetch|Load failed/i.test(message)) return;
+      seen.add(message); sent++;
+      try { sb.rpc('log_client_error', { p_message: String(message), p_stack: stack ? String(stack) : null, p_url: location.pathname + location.hash + ' · ' + (S.view || '') + '/' + (S.tab || ''), p_agent: navigator.userAgent }).then(() => {}, () => {}); } catch (_) {}
+    }
+    window.addEventListener('error', (e) => report(e.message, e.error && e.error.stack, e.filename));
+    window.addEventListener('unhandledrejection', (e) => { const r = e.reason || {}; report(r.message || String(r), r.stack, null); });
   })();
 
   // ---------- appearance (per device) ----------
