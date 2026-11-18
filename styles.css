@@ -793,3 +793,10 @@ button.ut.on { box-shadow: 0 0 0 2px var(--accent); }
 .ie-net > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--line); }
 .ie-net strong { font-size: 22px; }
 .inc-tag { background: var(--paid-bg); color: var(--paid-fg); }
+
+/* Personal tab */
+.phero { background: linear-gradient(150deg, #3A2F5C 0%, #1D1733 100%); }
+.pchips { display: flex; flex-wrap: wrap; gap: 8px; }
+.pchip { height: auto; min-height: 40px; padding: 8px 12px; }
+.gearbtn { width: 44px; height: 44px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.gearbtn[aria-current="page"] { background: var(--accent); color: var(--accent-ink, #fff); border-color: transparent; }
