@@ -812,3 +812,5 @@ button.ut.on { box-shadow: 0 0 0 2px var(--accent); }
 .iconbtn.sm[disabled] { opacity: .25; }
 .cz-switch input { width: 22px; height: 22px; accent-color: var(--accent); margin: 0; }
 .btn.sm { min-height: 38px; padding: 0 12px; font-size: 14px; }
+.updbar { position: sticky; top: 0; z-index: 20; margin: 0 16px 8px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 8px 8px 14px; border-radius: 14px; background: var(--accent); color: var(--accent-ink, #fff); font-weight: 700; font-size: 14px; }
+.updbar .btn { background: var(--bg); color: var(--ink); border: 0; }

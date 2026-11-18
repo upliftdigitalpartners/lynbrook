@@ -881,6 +881,7 @@
         <div class="topbar-row"><span class="eyebrow">${esc(addr)}</span>${offline}</div>
         <div class="topbar-row"><h1 class="display">${esc(titles[S.tab])}</h1><span class="topbar-actions"><button class="iconbtn gearbtn" data-act="tab" data-tab="settings" aria-label="Settings" title="Settings" ${S.tab === 'settings' ? 'aria-current="page"' : ''}>${ICON.settings}</button>${add ? `<button class="addbtn" data-act="${add[0]}" aria-label="${add[1]}">${ICON.plus}<span>Add</span></button>` : ''}</span></div>
       </header>
+      ${S.updateReady ? '<div class="updbar" role="status"><span>A new version is ready.</span><button type="button" class="btn sm" data-act="app-reload">Refresh</button></div>' : ''}
       <main class="main">${body}</main>
       <nav class="tabbar" aria-label="App sections"><div class="tabbar-inner" style="grid-template-columns:repeat(${vt.length}, minmax(0, 1fr))">${tabs}</div></nav>
       ${S.sheet ? sheetView() : ''}
@@ -2216,7 +2217,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.13</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.13.1</p>`;
   }
 
   function importCard() {
@@ -2853,6 +2854,7 @@ function setup() {
       case 'bill-archive': { const b = findBill(S.sheet.id); if (!b) break; saveBill(Object.assign({}, b, { active: false })); S.sheet = null; render(); toast(billTitle(b) + ' removed', () => saveBill(Object.assign({}, b, { active: true }))); break; }
       case 'bill-restore': { const b = findBill(id); if (!b) break; saveBill(Object.assign({}, b, { active: true })); render(); toast(billTitle(b) + ' is back'); break; }
       case 'bill-forget': { if (S.forgetArm !== id) { S.forgetArm = id; render(); setTimeout(() => { if (S.forgetArm === id) { S.forgetArm = null; renderSoon(); } }, 4000); break; } S.forgetArm = null; deleteBill(id); render(); toast('Deleted for good'); break; }
+      case 'app-reload': window.location.reload(); break;
       case 'tour-next': if (S.tour < TOUR.length - 1) { S.tour++; render(); } else endTour(); break;
       case 'tour-skip': endTour(); break;
       case 'tour-again': S.tour = 0; window.scrollTo(0, 0); render(); break;
@@ -3522,7 +3524,21 @@ function setup() {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(getTheme()));
 
   // ---------- boot ----------
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e));
+  // Updates: check for a new version on every open, and switch to it as soon as it's installed
+  if ('serviceWorker' in navigator) {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+    }).catch((e) => console.warn('SW', e));
+    let reloading = false;
+    const reloadNow = () => { if (reloading) return; reloading = true; window.location.reload(); };
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) return; // first install, nothing old on screen
+      const busy = S.sheet || S.story || (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName));
+      if (!busy) return reloadNow();
+      S.updateReady = true; renderSoon();
+    });
+  }
   S.pending = readOutbox().length;
 
   sb.auth.onAuthStateChange((event, session) => {

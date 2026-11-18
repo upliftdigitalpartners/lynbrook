@@ -1,5 +1,5 @@
 // Service worker: offline app shell + push notifications.
-const VERSION = 'v2.13.0';
+const VERSION = 'v2.13.1';
 const CACHE = 'evergreen-' + VERSION;
 const SHELL = [
   './',
@@ -20,7 +20,8 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'reload' skips the browser's HTTP cache so a new version never stores old files
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -40,7 +41,7 @@ self.addEventListener('fetch', (e) => {
   // Pages: network first so updates arrive, fall back to the cached shell offline.
   if (req.mode === 'navigate') {
     e.respondWith(
-      fetch(req).then((res) => {
+      fetch(req, { cache: 'no-cache' }).then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put('./index.html', copy));
         return res;
@@ -49,7 +50,18 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Static files: cached copy right away, refresh in the background.
+  // App code (JS, CSS, manifest): newest from the network first, cached copy when offline.
+  if (/\.(js|css|webmanifest)$/.test(url.pathname) && !url.pathname.includes('/vendor/')) {
+    e.respondWith(
+      fetch(req, { cache: 'no-cache' }).then((res) => {
+        if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
+        return res;
+      }).catch(() => caches.match(req))
+    );
+    return;
+  }
+
+  // Fonts, icons, vendor libraries: cached copy right away, refresh in the background.
   e.respondWith(
     caches.match(req).then((hit) => {
       const net = fetch(req).then((res) => {
