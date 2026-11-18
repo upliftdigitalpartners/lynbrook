@@ -970,16 +970,19 @@
     const unitChips = [['all', 'Everything'], ['shared', 'Shared']].concat(floors.map((u) => [u.id, u.name]))
       .map(([id, l]) => `<button class="chip" data-act="unit" data-unit="${esc(id)}" aria-pressed="${S.unit === id}">${esc(l)}</button>`).join('');
     const isPaid = (r) => !!(r.pay && r.pay.paid_at);
-    const attention = md.rows.filter((r) => !isPaid(r) && ['late', 'soon', 'setup'].includes(r.st.k));
-    const later = md.rows.filter((r) => !isPaid(r) && !['late', 'soon', 'setup'].includes(r.st.k));
-    const paid = md.rows.filter(isPaid);
+    const CF = { Gas: ['Gas'], Electric: ['Electric'], util: ['Gas', 'Electric', 'Water'] };
+    const rows = S.catFilter && CF[S.catFilter] ? md.rows.filter((r) => CF[S.catFilter].includes(r.b.category)) : md.rows;
+    const cfLabel = { Gas: 'Gas bills', Electric: 'Electricity bills', util: 'Gas, electric and water' }[S.catFilter];
+    const attention = rows.filter((r) => !isPaid(r) && ['late', 'soon', 'setup'].includes(r.st.k));
+    const later = rows.filter((r) => !isPaid(r) && !['late', 'soon', 'setup'].includes(r.st.k));
+    const paid = rows.filter(isPaid);
     const paidSum = paid.reduce((t, r) => t + (r.amt || 0), 0);
     const list = (rows) => `<ul class="bills">${rows.map(billCard).join('')}</ul>`;
     const body = !md.rows.length
       ? emptyState('empty', 'No bills here yet', 'Add one, or scan a paper bill.', '<button class="btn primary-soft" data-act="new-bill">Add a bill</button>')
       : (attention.length ? `<h2 class="section-h">Needs attention <span class="count">${attention.length}</span></h2>${list(attention)}` : '')
         + (later.length ? `<h2 class="section-h">Coming up <span class="count">${later.length}</span></h2>${list(later)}` : '')
-        + (!attention.length && !later.length ? emptyState('done', 'All caught up', 'Every ' + monthLabel(S.month).split(' ')[0] + ' bill is paid. Enjoy the quiet.') : '')
+        + (cfLabel && !rows.length ? emptyState('empty', 'No ' + cfLabel.toLowerCase() + ' this month', '') : '') + (rows.length && !attention.length && !later.length ? emptyState('done', 'All caught up', 'Every ' + monthLabel(S.month).split(' ')[0] + ' bill is paid. Enjoy the quiet.') : '')
         + (paid.length ? `<details class="paidfold" data-fold="b-paid" ${isOpen('b-paid', false) ? 'open' : ''}><summary><span>Paid <span class="count">${paid.length}</span></span><span class="num muted">${money(paidSum)}</span><span class="chev" aria-hidden="true"></span></summary><ul class="prows">${paid.map(paidRow).join('')}</ul></details>` : '');
     if (S.billsView === 'cal') return `${weatherBanner()}${setupBanner()}${[0, 1].includes(new Date().getDay()) || !storySeen() && new Date().getDay() === 2 ? storyBar() : ''}${monthNav()}
       ${heroCarousel(utilTotals(md), billsHero(md, pct))}
@@ -990,6 +993,7 @@
       ${billsViewSwitch()}
       ${timeline(md)}
       <div class="chips" role="group" aria-label="Show place">${unitChips}</div>
+      ${cfLabel ? `<div class="cf-bar" id="bill-list"><span>Showing <strong>${esc(cfLabel)}</strong> · ${money(rows.reduce((t, r) => t + (r.amt || 0), 0))}</span><button type="button" class="linkbtn" data-act="cat-filter" data-v="">Show all</button></div>` : '<span id="bill-list"></span>'}
       ${body}`;
   }
 
@@ -1081,7 +1085,8 @@
     if (!n.Gas && !n.Electric && !n.Water) return '';
     const sub = (c) => !n[c] ? 'No bills' : missing[c] ? missing[c] + ' not in yet' : n[c] + (n[c] === 1 ? ' bill' : ' bills');
     const miss = missing.Gas + missing.Electric + missing.Water;
-    const tile = (cls, icon, label, v, note) => `<div class="ut ${cls}"><span class="ut-top"><span class="ut-icon" aria-hidden="true">${icon}</span>${label}</span><strong class="display num">${money(v)}</strong><span class="ut-sub">${note}</span></div>`;
+    const fv = { gas: 'Gas', elec: 'Electric', all: 'util' };
+    const tile = (cls, icon, label, v, note) => `<button type="button" class="ut ${cls}${S.catFilter === fv[cls] ? ' on' : ''}" data-act="cat-filter" data-v="${fv[cls]}" aria-pressed="${S.catFilter === fv[cls]}" aria-label="${label} ${money(v)}. Show these bills"><span class="ut-top"><span class="ut-icon" aria-hidden="true">${icon}</span>${label}<span class="ut-go" aria-hidden="true">›</span></span><strong class="display num">${money(v)}</strong><span class="ut-sub">${note}</span></button>`;
     return `<section class="utils" aria-label="${esc(monthLabel(S.month))} utility totals">
       ${tile('gas', '🔥', 'Total gas', t.Gas, sub('Gas'))}
       ${tile('elec', '⚡', 'Total electricity', t.Electric, sub('Electric'))}
@@ -1405,7 +1410,11 @@
     const r = x.r, done = x.st.k === 'paid';
     const unit = unitName(r.unit_id);
     const d = dueOn(r.due_day, S.month);
-    const msg = encodeURIComponent('Hi' + (r.tenant_name ? ' ' + r.tenant_name.split(' ')[0] : '') + ', a reminder that ' + monthLabel(S.month).split(' ')[0] + ' rent of ' + money(x.due - x.got) + ' was due ' + (d ? fmtDay(d) : '') + '. Thank you!');
+    const first = r.tenant_name ? r.tenant_name.split(' ')[0] : '';
+    const zelle = S.household && S.household.pay_zelle;
+    const late = x.st.k === 'late' || (x.got > 0 && !done);
+    const msg = encodeURIComponent('Hi' + (first ? ' ' + first : '') + ', ' + (late ? 'a friendly reminder that ' : 'just a heads-up that ') + monthLabel(S.month).split(' ')[0] + ' rent' + (x.got > 0 ? ' (' + money(x.due - x.got) + ' left)' : ' of ' + money(x.due - x.got)) + (d ? (late ? ' was due ' : ' is due ') + fmtDay(d) : '') + '.' + (zelle ? ' You can Zelle it to ' + zelle + '.' : '') + ' Thank you!');
+    const smsHref = 'sms:' + (r.phone ? r.phone.replace(/[^\d+]/g, '') : '') + (isIOS ? '&' : '?') + 'body=' + msg;
     const justPaid = done && FX.stamp === r.id && Date.now() < FX.stampUntil;
     return `<li class="bill swipe ${done ? 'paid' : ''}" id="rent-${r.id}" ${x.due != null ? 'data-swipe-right="rent-toggle"' : ''} data-swipe-left="rental" data-id="${r.id}" data-paid="${done}">${done ? `<span class="paidstamp${justPaid ? ' slam' : ''}" aria-hidden="true">PAID</span>` : ''}
       <div class="bill-top">
@@ -1423,7 +1432,7 @@
           <button class="btn primary-soft" type="submit">Save</button><button class="btn" type="button" data-act="partial-cancel">Cancel</button></form>`
         : `<div class="btns gotrow"><button class="btn gotbtn" data-act="rent-toggle" data-id="${r.id}" style="flex:2">✓ Got ${money(x.due - x.got)}<span class="small"> · ${esc(lastRentMethod(r))}</span></button><button class="btn" data-act="partial" data-id="${r.id}" style="flex:1">Partial</button></div>`) : ''}
       <div class="btns">
-        ${!done && x.due != null && r.phone ? `<a class="btn" href="sms:${esc(r.phone.replace(/[^\d+]/g, ''))}${isIOS ? '&' : '?'}body=${msg}">Text reminder</a>` : ''}
+        ${!done && x.due != null ? `<a class="btn${late ? ' textbtn' : ''}" href="${esc(smsHref)}" aria-label="Text ${esc(first || 'tenant')} a rent reminder">💬 Text ${esc(first || 'reminder')}</a>` : ''}
         ${r.phone ? `<a class="btn" href="tel:${esc(r.phone.replace(/[^\d+]/g, ''))}">Call</a>` : ''}
         ${x.got > 0 ? `<button class="btn" data-act="receipt" data-id="${r.id}">Receipt</button>` : ''}
         <button class="btn" data-act="rental" data-id="${r.id}" style="flex:1">Details</button>
@@ -1754,6 +1763,22 @@
     </section>`;
   }
   function summaryTab() { return foldSections(summaryTabRaw(), { 'Money in and out, last 6 months': true, 'Bills by place': false, 'Cash-flow forecast': true }); }
+  function summaryHeadline(k) {
+    const isCur = k === monthKey(new Date()), isPast = k < monthKey(new Date());
+    const rm = rentMonth(k);
+    const net = rm.received - billSplit(k).rentalPaid - upkeepSplit(k, false);
+    const owe = rm.rows.filter((x) => !isHome(x.r.unit_id) && x.due != null && x.got < x.due && (x.st.k === 'late' || isPast));
+    const md = billMonth(k, true);
+    const over = md.rows.filter((r) => !(r.pay && r.pay.paid_at) && r.st.label.startsWith('Overdue'));
+    const left = md.rows.filter((r) => !(r.pay && r.pay.paid_at) && !r.b.escrow && r.amt);
+    const mon = monthLabel(k).split(' ')[0];
+    const lead = !rm.received && !billSplit(k).rentalPaid && !upkeepSplit(k, false) ? 'nothing recorded yet.' : net >= 0 ? `you ${isPast ? 'kept' : 'are up'} <strong class="ok-num">${money0(net)}</strong>${isCur ? ' so far' : ''}.` : `you ${isPast ? 'were' : 'are'} <strong class="late-num">${money0(-net)}</strong> short${isCur ? ' so far' : ''}.`;
+    const bits = owe.map((x) => `${esc(rentalTitle(x.r))} still owes <strong>${money0(x.due - x.got)}</strong>.`);
+    if (over.length) bits.push(`${over.length} ${over.length === 1 ? 'bill is' : 'bills are'} overdue (${money0(over.reduce((t, r) => t + (r.amt || 0), 0))}).`);
+    else if (left.length && !isPast) bits.push(`${left.length} ${left.length === 1 ? 'bill' : 'bills'} left to pay (${money0(left.reduce((t, r) => t + (r.amt || 0), 0))}).`);
+    if (!bits.length) bits.push(isPast || !left.length ? 'Everything’s paid and all rent is in.' : 'Nothing is late.');
+    return `<section class="headline" aria-label="${esc(mon)} in a sentence"><p class="display">${esc(mon)}: ${lead} ${bits.join(' ')}</p></section>`;
+  }
   function summaryTabRaw() {
     const sp = billSplit(S.month);
     const md = { paid: sp.rentalPaid };
@@ -1785,7 +1810,9 @@
         <div class="hist2">${rows.map((r) => `<div class="col ${r.k === S.month ? 'cur' : ''}">
           <div class="pair"><div class="b in" style="height:${Math.round((r.inc / max) * 100)}%" title="In ${money0(r.inc)}"></div><div class="b out" style="height:${Math.round((r.out / max) * 100)}%" title="Out ${money0(r.out)}"></div></div>
           <span>${monthLabel(r.k, true)}</span></div>`).join('')}</div>`;
-    return `${storyBar()}${monthNav()}
+    return `${monthNav()}
+      ${summaryHeadline(S.month)}
+      ${storyBar()}
       ${recapCard()}
       <h2 class="section-h" style="margin:0">${esc(propName)} · rental${homes.length ? ' <span class="small muted" style="font-weight:500">(without ' + esc(homes.join(', ')) + ')</span>' : ''}</h2>
       <div class="grid2">
@@ -1941,6 +1968,9 @@
         <h2>Appearance</h2>
         <div class="seg theme-seg" role="group" aria-label="Light or dark">${[['auto', 'Automatic'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<button data-act="theme" data-v="${v}" aria-pressed="${th === v}">${l}</button>`).join('')}</div>
         <p class="small muted">Automatic follows your phone’s light or dark setting. This choice is saved on this device only.</p>
+        <p class="lab small" style="margin:6px 0 0">Text size</p>
+        <div class="seg theme-seg" role="group" aria-label="Text size">${[['1', 'Normal', 15], ['1.12', 'Large', 17], ['1.25', 'Larger', 19]].map(([v, l, px]) => `<button data-act="textsize" data-v="${v}" aria-pressed="${getTextSize() === v}" style="font-size:${px}px">${l}</button>`).join('')}</div>
+        <p class="small muted">Makes everything in the app bigger on this device.</p>
       </section>
       <section class="card" aria-label="Reminders">
         <h2>Reminders</h2>
@@ -1987,7 +2017,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.8</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.9</p>`;
   }
 
   function importCard() {
@@ -2505,6 +2535,12 @@ function setup() {
     const id = el.dataset.id;
     switch (act) {
       case 'tab': S.tab = el.dataset.tab; window.scrollTo(0, 0); render(); break;
+      case 'textsize': try { localStorage.setItem('eh-text', el.dataset.v); } catch (_) {} applyTextSize(el.dataset.v); render(); toast(el.dataset.v === '1' ? 'Normal text' : (el.dataset.v === '1.12' ? 'Large' : 'Larger') + ' text on'); break;
+      case 'cat-filter': {
+        S.catFilter = el.dataset.v || null; S.billsView = 'list'; render();
+        if (S.catFilter) { const a = document.getElementById('bill-list'); if (a) a.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' }); }
+        break;
+      }
       case 'theme': try { localStorage.setItem('eh-theme', el.dataset.v); } catch (_) {} applyTheme(el.dataset.v); render(); toast(el.dataset.v === 'auto' ? 'Following your phone' : (el.dataset.v === 'dark' ? 'Dark' : 'Light') + ' mode on'); break;
       case 'jump': { const c = document.getElementById('bill-' + id); if (c) { c.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' }); c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 1200); } else { S.filter = 'all'; S.unit = 'all'; render(); const d = document.getElementById('bill-' + id); if (d) d.scrollIntoView({ block: 'center' }); } break; }
       case 'go': {
@@ -3206,6 +3242,8 @@ function setup() {
   })();
 
   // ---------- appearance (per device) ----------
+  function getTextSize() { try { return localStorage.getItem('eh-text') || '1'; } catch (_) { return '1'; } }
+  function applyTextSize(v) { if (v === '1') document.documentElement.removeAttribute('data-text'); else document.documentElement.setAttribute('data-text', v); }
   function getTheme() { try { return localStorage.getItem('eh-theme') || 'auto'; } catch (_) { return 'auto'; } }
   function applyTheme(t) {
     const root = document.documentElement;
