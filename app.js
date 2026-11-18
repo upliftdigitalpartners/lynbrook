@@ -1863,6 +1863,31 @@
     if (!bits.length) bits.push(isPast || !left.length ? 'Everything’s paid and all rent is in.' : 'Nothing is late.');
     return `<section class="headline" aria-label="${esc(mon)} in a sentence"><p class="display">${esc(mon)}: ${lead} ${bits.join(' ')}</p></section>`;
   }
+  // Income (rent) vs expenses (rental bills by category + upkeep) for the month. Cedarcroft is left out, as everywhere in totals.
+  function incomeCard(k) {
+    const rm = rentMonth(k);
+    const inc = rm.rows.filter((x) => !isHome(x.r.unit_id) && x.due != null);
+    const got = inc.reduce((t, x) => t + x.got, 0), expect = inc.reduce((t, x) => t + (x.due || 0), 0);
+    const rows = billMonth(k, true).rows.filter((r) => !r.b.escrow && !isHome(r.b.unit_id) && r.amt != null);
+    const g = new Map();
+    rows.forEach((r) => { const c = r.b.category || 'Other'; const o = g.get(c) || { name: c, total: 0, paid: 0 }; o.total += r.amt; if (r.pay && r.pay.paid_at) o.paid += r.amt; g.set(c, o); });
+    const up = upkeepSplit(k, false); if (up) g.set('Upkeep & repairs', { name: 'Upkeep & repairs', total: up, paid: up });
+    const exp = Array.from(g.values()).sort((a, b) => b.total - a.total);
+    const out = exp.reduce((t, x) => t + x.total, 0), outPaid = exp.reduce((t, x) => t + x.paid, 0);
+    if (!inc.length && !exp.length) return '';
+    const netNow = got - outPaid, netAll = expect - out;
+    const sign = (v) => (v < 0 ? '−' : '+') + money0(Math.abs(v));
+    const incRow = (x) => `<li><span class="ie-name">Rent · ${esc(x.r.tenant_name ? x.r.tenant_name + ' (' + unitName(x.r.unit_id) + ')' : unitName(x.r.unit_id))}</span>${x.got > 0 ? `<span class="ie-amt num ok-num">+${money0(x.got)}</span>` : `<span class="ie-amt num muted">${money0(x.due)}</span>`}<span class="ie-sub small ${x.got >= x.due ? 'muted' : 'late'}">${x.got >= x.due ? 'received' : x.got > 0 ? 'of ' + money0(x.due) + ' · partial' : 'not in yet'}</span></li>`;
+    const expRow = (x) => `<li><span class="ie-name">${esc(x.name)}</span><span class="ie-amt num">−${money0(x.total)}</span><span class="ie-sub small ${x.paid >= x.total ? 'muted' : 'late'}">${x.paid >= x.total ? 'paid' : x.paid > 0 ? money0(x.total - x.paid) + ' left to pay' : 'not paid yet'}</span></li>`;
+    return `<section class="card iecard" aria-label="Income and expenses for ${esc(monthLabel(k))}">
+      <div class="row between"><h2>Income &amp; expenses · ${monthLabel(k, true)}</h2>${homeNames().length ? `<span class="small muted">without ${esc(homeNames().join(', '))}</span>` : ''}</div>
+      <div class="ie-group inc"><div class="ie-head"><span class="ie-tag">Income</span><span class="num ok-num">${money0(got)}<span class="muted small"> of ${money0(expect)}</span></span></div>
+        ${inc.length ? `<ul class="ie-list">${inc.map(incRow).join('')}</ul>` : '<p class="small muted" style="margin:0">Add your tenants on the Rent tab to track rent here.</p>'}</div>
+      <div class="ie-group exp"><div class="ie-head"><span class="ie-tag">Expenses</span><span class="num">${money0(out)}${outPaid < out ? `<span class="muted small"> · ${money0(outPaid)} paid</span>` : ''}</span></div>
+        ${exp.length ? `<ul class="ie-list">${exp.map(expRow).join('')}</ul>` : '<p class="small muted" style="margin:0">No bills this month.</p>'}</div>
+      <div class="ie-net"><div><span class="small muted">Net so far</span><strong class="display num ${netNow < 0 ? 'late-num' : 'ok-num'}">${sign(netNow)}</strong></div><div><span class="small muted">When all rent is in and bills are paid</span><strong class="display num ${netAll < 0 ? 'late-num' : 'ok-num'}">${sign(netAll)}</strong></div></div>
+    </section>`;
+  }
   function summaryTabRaw() {
     const sp = billSplit(S.month);
     const md = { paid: sp.rentalPaid };
@@ -1896,6 +1921,7 @@
           <span>${monthLabel(r.k, true)}</span></div>`).join('')}</div>`;
     return `${monthNav()}
       ${summaryHeadline(S.month)}
+      ${incomeCard(S.month)}
       ${storyBar()}
       ${recapCard()}
       <h2 class="section-h" style="margin:0">${esc(propName)} · rental${homes.length ? ' <span class="small muted" style="font-weight:500">(without ' + esc(homes.join(', ')) + ')</span>' : ''}</h2>
@@ -1923,6 +1949,7 @@
         <h2>Breakdown · ${monthLabel(S.month, true)}</h2><p class="lab small" style="margin:0">By place</p>
         ${byFloor.map((g) => `<div class="stack" style="gap:6px"><div class="row between small"><span>${esc(g.name)} <span class="muted">· ${g.n} ${g.n === 1 ? 'bill' : 'bills'}</span></span><strong class="num">${money(g.total)}</strong></div><div class="meter"><div style="width:${Math.max(2, Math.round((g.total / fMax) * 100))}%"></div></div></div>`).join('')}
         <p class="lab small" style="margin:6px 0 0">By category</p>
+        ${(() => { const rr = rentMonth(S.month).rows.filter((x) => !isHome(x.r.unit_id) && x.due != null); return rr.length ? `<div class="row between small"><span>Rent <span class="tag inc-tag">Income</span> <span class="muted">· ${rr.length}</span></span><strong class="num ok-num">+${money(rr.reduce((t, x) => t + (x.due || 0), 0))}</strong></div>` : ''; })()}
         ${byCat.map((g) => `<div class="row between small"><span>${esc(g.name)} <span class="muted">· ${g.n}</span></span><strong class="num">${money(g.total)}</strong></div>`).join('')}
       </section>
       ${fold('tax', 'Tax report · ' + (S.taxYear || Number(S.month.slice(0, 4))), taxCard(), false)}`;
