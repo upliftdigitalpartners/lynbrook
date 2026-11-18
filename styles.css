@@ -775,3 +775,21 @@ button.ut.on { box-shadow: 0 0 0 2px var(--accent); }
 .tour-house.still *, .tour-head.still { animation: none !important; }
 .tour-house.still .t-win { fill: #F2D58A; }
 .tour:has(.tour-house.still) { animation: none; }
+
+/* Income & expenses card (Home) */
+.iecard { gap: 12px; }
+.ie-group { border-radius: 16px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.ie-group.inc { background: var(--paid-bg); }
+.ie-group.exp { background: var(--line-2); }
+.ie-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-weight: 800; font-size: 17px; }
+.ie-tag { font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted-2); }
+.ie-group.inc .ie-tag { color: var(--paid-fg); }
+.ie-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ie-list li { display: grid; grid-template-columns: 1fr auto; column-gap: 10px; align-items: baseline; }
+.ie-name { font-size: 15px; font-weight: 600; min-width: 0; }
+.ie-amt { font-size: 15px; font-weight: 700; text-align: right; }
+.ie-sub { grid-column: 1 / -1; margin-top: -2px; }
+.ie-net { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ie-net > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--line); }
+.ie-net strong { font-size: 22px; }
+.inc-tag { background: var(--paid-bg); color: var(--paid-fg); }
