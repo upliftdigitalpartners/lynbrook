@@ -712,3 +712,21 @@ button.ut.on { box-shadow: 0 0 0 2px var(--accent); }
 :root[data-text="1.25"] .topbar, :root[data-text="1.25"] .main, :root[data-text="1.25"] .sheet, :root[data-text="1.25"] .story-main { zoom: 1.25; }
 :root[data-text] .tab span { font-size: 12px; font-weight: 700; }
 .main > .row.between:has(.monthnav) { flex-wrap: wrap; row-gap: 8px; }
+
+/* ===== v2.10 ===== */
+.check { width: 56px; height: 56px; border-radius: 16px; border-width: 2.5px; }
+.check svg { width: 26px; height: 26px; }
+.bill:not(.paid) .check:not([disabled]) { border-color: color-mix(in srgb, var(--accent) 45%, var(--field)); }
+.swipehint { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 16px; background: var(--soon-bg); color: var(--soon-fg); font-size: 14px; line-height: 1.4; animation: v27up .35s ease-out both; }
+.swipehint .linkbtn { color: inherit; font-weight: 800; min-height: 36px; padding: 0 4px; flex: none; }
+.sh-hand { font-size: 20px; display: inline-block; animation: shpoint 1.6s ease-in-out infinite; }
+@keyframes shpoint { 0%,100% { transform: translateX(0); } 50% { transform: translateX(8px); } }
+.bill.nudge { animation: nudge 2.4s ease-in-out .8s 2; }
+@keyframes nudge { 0%, 30%, 100% { transform: translateX(0); } 12% { transform: translateX(44px); } 20% { transform: translateX(30px); } }
+.rc-status { margin: -4px 0 0; color: var(--accent); font-weight: 600; min-height: 0; }
+.rc-status:empty { display: none; }
+.bd-edit { margin-top: 2px; }
+.bd-back { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 14px; background: var(--soon-bg); color: var(--soon-fg); font-size: 14px; }
+.bd-back .linkbtn { color: inherit; font-weight: 800; min-height: 32px; padding: 0; }
+@media (prefers-reduced-motion: reduce) { .swipehint, .sh-hand, .bill.nudge { animation: none; } }
+#bill-month { scroll-margin-top: 76px; }

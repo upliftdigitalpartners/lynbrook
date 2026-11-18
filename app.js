@@ -246,10 +246,11 @@
     if (!due || amt == null) return { k: 'setup', label: 'Needs details' };
     const diff = dayDiff(due);
     if (b.autopay) return { k: 'auto', label: (diff < 0 ? 'Autopay · was due ' : 'Autopay · ') + fmtDay(due) };
-    if (diff < 0) return { k: 'late', label: 'Overdue · ' + fmtDay(due) };
+    if (diff < 0) return { k: 'late', label: 'Overdue · ' + (diff === -1 ? 'since yesterday' : -diff + ' days late') + ' (' + fmtDay(due) + ')' };
     if (diff === 0) return { k: 'late', label: 'Due today' };
-    if (diff <= 5) return { k: 'soon', label: 'Due in ' + diff + (diff === 1 ? ' day' : ' days') };
-    return { k: 'up', label: 'Due ' + fmtDay(due) };
+    if (diff === 1) return { k: 'soon', label: 'Due tomorrow' };
+    if (diff <= 6) return { k: diff <= 5 ? 'soon' : 'up', label: 'Due ' + due.toLocaleDateString('en-US', { weekday: 'long' }) + ' · in ' + diff + ' days' };
+    return { k: 'up', label: 'Due ' + due.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) };
   }
   function unitMatch(unitId) {
     if (S.unit === 'all') return true;
@@ -973,14 +974,20 @@
     const CF = { Gas: ['Gas'], Electric: ['Electric'], util: ['Gas', 'Electric', 'Water'] };
     const rows = S.catFilter && CF[S.catFilter] ? md.rows.filter((r) => CF[S.catFilter].includes(r.b.category)) : md.rows;
     const cfLabel = { Gas: 'Gas bills', Electric: 'Electricity bills', util: 'Gas, electric and water' }[S.catFilter];
-    const attention = rows.filter((r) => !isPaid(r) && ['late', 'soon', 'setup'].includes(r.st.k));
+    const rank = { late: 0, soon: 1, setup: 2 };
+    const attention = rows.filter((r) => !isPaid(r) && ['late', 'soon', 'setup'].includes(r.st.k))
+      .sort((a, c) => rank[a.st.k] - rank[c.st.k] || (a.due ? a.due.getTime() : 9e15) - (c.due ? c.due.getTime() : 9e15));
     const later = rows.filter((r) => !isPaid(r) && !['late', 'soon', 'setup'].includes(r.st.k));
+    const hintSeen = (() => { try { return !!localStorage.getItem('eh-hint-swipe'); } catch (_) { return true; } })();
+    const firstOpen = attention.concat(later).find((r) => r.amt != null && r.due);
+    S.nudgeId = !hintSeen && firstOpen ? firstOpen.b.id : null;
+    const hint = S.nudgeId ? `<div class="swipehint" role="note"><span class="sh-hand" aria-hidden="true">👉</span><span><strong>Tip:</strong> swipe a bill <strong>right</strong> to mark it paid, or <strong>left</strong> for details. The big ✓ box works too.</span><button type="button" class="linkbtn" data-act="hint-ok">Got it</button></div>` : '';
     const paid = rows.filter(isPaid);
     const paidSum = paid.reduce((t, r) => t + (r.amt || 0), 0);
     const list = (rows) => `<ul class="bills">${rows.map(billCard).join('')}</ul>`;
     const body = !md.rows.length
       ? emptyState('empty', 'No bills here yet', 'Add one, or scan a paper bill.', '<button class="btn primary-soft" data-act="new-bill">Add a bill</button>')
-      : (attention.length ? `<h2 class="section-h">Needs attention <span class="count">${attention.length}</span></h2>${list(attention)}` : '')
+      : hint + (attention.length ? `<h2 class="section-h">Needs attention <span class="count">${attention.length}</span></h2>${list(attention)}` : '')
         + (later.length ? `<h2 class="section-h">Coming up <span class="count">${later.length}</span></h2>${list(later)}` : '')
         + (cfLabel && !rows.length ? emptyState('empty', 'No ' + cfLabel.toLowerCase() + ' this month', '') : '') + (rows.length && !attention.length && !later.length ? emptyState('done', 'All caught up', 'Every ' + monthLabel(S.month).split(' ')[0] + ' bill is paid. Enjoy the quiet.') : '')
         + (paid.length ? `<details class="paidfold" data-fold="b-paid" ${isOpen('b-paid', false) ? 'open' : ''}><summary><span>Paid <span class="count">${paid.length}</span></span><span class="num muted">${money(paidSum)}</span><span class="chev" aria-hidden="true"></span></summary><ul class="prows">${paid.map(paidRow).join('')}</ul></details>` : '');
@@ -1004,7 +1011,7 @@
     const editing = S.editing === b.id || !complete;
     const unit = unitName(b.unit_id);
     const justPaid = paid && FX.stamp === b.id && Date.now() < FX.stampUntil;
-    return `<li class="bill swipe ${paid ? 'paid' : ''}" id="bill-${b.id}" data-swipe-right="toggle" data-swipe-left="bill" data-id="${b.id}" data-paid="${paid}">${paid ? `<span class="paidstamp${justPaid ? ' slam' : ''}" aria-hidden="true">PAID</span>` : ''}
+    return `<li class="bill swipe ${paid ? 'paid' : ''}${S.nudgeId === b.id && !paid ? ' nudge' : ''}" id="bill-${b.id}" data-swipe-right="toggle" data-swipe-left="bill" data-id="${b.id}" data-paid="${paid}">${paid ? `<span class="paidstamp${justPaid ? ' slam' : ''}" aria-hidden="true">PAID</span>` : ''}
       <div class="bill-top">
         <button class="check" data-act="toggle" data-id="${b.id}" aria-pressed="${paid}" aria-label="${paid ? 'Mark unpaid' : 'Mark paid'}: ${esc(billTitle(b))}, ${esc(unit)}">${ICON.check}</button>
         <div class="bill-info">
@@ -1317,7 +1324,9 @@
     const bars = months.map((x, i) => `<button type="button" class="bd-bar${i === selI ? ' sel' : ''}${i === 11 ? ' cur' : ''}" data-act="bd-bar" data-id="${b.id}" data-i="${i}" aria-pressed="${i === selI}" aria-label="${monthLabel(x.k)}: ${x.v != null ? money(x.v) : 'no amount'}"><i style="height:${x.v ? Math.max(4, Math.round((x.v / max) * 100)) : 2}%;animation-delay:${(i * 0.04).toFixed(2)}s"></i><span>${monthLabel(x.k, true).slice(0, 1)}</span></button>`).join('');
     const justPaid = paid && FX.stamp === b.id && Date.now() < FX.stampUntil;
     const slide = b.escrow ? '' : `<button type="button" class="slidepay${paid ? ' on' : ''}${justPaid ? ' slid' : ''}" data-act="toggle" data-id="${b.id}" aria-pressed="${paid}" aria-label="${paid ? 'Paid. Tap to mark unpaid' : 'Mark ' + esc(billTitle(b)) + ' paid'}"><span class="sp-knob" aria-hidden="true">${paid ? '✓' : '→'}</span><span class="sp-label">${paid ? 'Paid ' + fmtDay(new Date(pay.paid_at)) + ' · tap to undo' : 'Slide to mark paid'}</span>${justPaid ? '<span class="paidstamp slam" aria-hidden="true">PAID</span>' : ''}</button>`;
-    return `<section class="bd-hero">
+    const curK = monthKey(new Date());
+    const backBar = k !== curK ? `<div class="bd-back"><span>Showing <strong>${monthLabel(k)}</strong></span><button type="button" class="linkbtn" data-act="bd-month" data-k="${curK}">Back to ${monthLabel(curK).split(' ')[0]}</button></div>` : '';
+    return backBar + `<section class="bd-hero">
         <div class="row" style="gap:12px"><span class="bd-icon" aria-hidden="true">${CAT_ICON[b.category] || '🧾'}</span><span class="stack" style="gap:0;min-width:0"><strong class="display bd-name">${esc(b.name)}</strong><span class="small bd-sub">${esc((b.label ? b.label + ' · ' : '') + unitName(b.unit_id))} · ${esc(st.label)}</span></span></div>
         <div class="row" style="gap:10px;align-items:baseline;flex-wrap:wrap"><span class="display num bd-amt">${amt != null ? money(amt) : '—'}</span>${delta != null && Math.abs(delta) >= 1 ? `<span class="bd-chip">${delta > 0 ? '▲' : '▼'} ${money0(Math.abs(delta))} vs ${monthLabel(addMonths(k, -12), true)} ’${addMonths(k, -12).slice(2, 4)}</span>` : ''}</div>
         ${due && !paid ? `<span class="small bd-sub">Due ${due.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>` : ''}
@@ -1325,6 +1334,7 @@
       ${vals.length >= 2 ? `<section class="card bd-chart" aria-label="Last 12 months">
         <div class="row between"><h2>Last 12 months</h2><span class="small muted">Tap a bar</span></div>
         <div class="bd-plot">${trend}<div class="bd-bars">${bars}</div></div>
+        ${selI !== 11 ? `<button type="button" class="btn block bd-edit" data-act="bd-month" data-k="${sm.k}">Edit ${monthLabel(sm.k)} ›</button>` : ''}
         <div class="grid2"><div class="stat"><span class="small muted">${monthLabel(sm.k)}</span><span class="v display num">${sm.v != null ? money(sm.v) : '—'}</span></div><div class="stat"><span class="small muted">12-month average</span><span class="v display num">${avg != null ? money(avg) : '—'}</span></div></div>
       </section>` : ''}
       ${slide}`;
@@ -2017,7 +2027,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.9</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.10</p>`;
   }
 
   function importCard() {
@@ -2407,7 +2417,7 @@ function setup() {
         <p class="small muted">The latest “Balance after” you enter replaces the loan balance. Home value is your own estimate, for equity.</p>
         <button type="button" class="btn primary-soft" data-act="payoff-open">Open payoff planner</button>
       </section>`;
-    const month = isNew ? (sc ? scanNote + `<section class="card"><h2>${monthLabel(S.month)}</h2>${f('p-amt', 'Amount ($)', moneyInp('p-amt', 'p_amount', amt))}</section>` : '') : scanNote + `<section class="card">
+    const month = isNew ? (sc ? scanNote + `<section class="card"><h2>${monthLabel(S.month)}</h2>${f('p-amt', 'Amount ($)', moneyInp('p-amt', 'p_amount', amt))}</section>` : '') : scanNote + `<section class="card" id="bill-month">
         <h2>${monthLabel(S.month)}</h2>
         <div class="grid2">${f('p-amt', 'Amount ($)', moneyInp('p-amt', 'p_amount', amt))}${f('p-date', 'Paid on', inp('p-date', 'p_paid', paidDate, 'type="date"'))}</div>
         <div class="grid2">${f('p-method', 'Paid with', `<select class="input" id="p-method" name="p_method">${methodOpts(pay.method)}</select>`)}${f('p-conf', 'Confirmation #', inp('p-conf', 'p_confirmation', pay.confirmation))}</div>
@@ -2506,9 +2516,11 @@ function setup() {
     if (!t) return '';
     return sheetShell('Done: ' + t.title, 'task-done', `<section class="card">
         ${f('dn-date', 'When', inp('dn-date', 'done_on', isoDate(today()), 'type="date" required'))}
-        <div class="grid2">${f('dn-cost', 'Cost ($)', moneyInp('dn-cost', 'cost', null))}${f('dn-vendor', 'Who did it', inp('dn-vendor', 'vendor', t.vendor, 'placeholder="Me / contractor" list="pros-list"'))}</div>${vendorList()}
+        ${(() => { const dr = S.doneReceipt && S.doneReceipt.id === t.id ? S.doneReceipt : null; return `<label class="btn block scanbtn"><input type="file" accept="image/*" capture="environment" class="sr" data-change="done-receipt" data-id="${t.id}"> ${ICON.camera} ${dr ? 'Retake receipt' : 'Snap the receipt (fills cost and who)'}</label>
+        <p class="small rc-status" id="dn-rc-status" aria-live="polite">${dr ? esc(dr.msg || '') : ''}</p>`; })()}
+        <div class="grid2">${f('dn-cost', 'Cost ($)', moneyInp('dn-cost', 'cost', S.doneReceipt && S.doneReceipt.id === t.id ? S.doneReceipt.cost : null))}${f('dn-vendor', 'Who did it', inp('dn-vendor', 'vendor', (S.doneReceipt && S.doneReceipt.id === t.id && S.doneReceipt.vendor) || t.vendor, 'placeholder="Me / contractor" list="pros-list"'))}</div>${vendorList()}
         ${f('dn-notes', 'Notes', `<textarea class="input" id="dn-notes" name="notes" placeholder="Optional"></textarea>`)}
-        <p class="small muted">${t.interval_months ? 'Next one will be scheduled ' + everyLabel(t).toLowerCase().replace('every', 'in') + ' from this date.' : 'This one-time job will be marked complete.'}</p>
+        <p class="small muted">${t.interval_months ? 'Next one will be scheduled ' + everyLabel(t).toLowerCase().replace(/^every (year|month)$/, 'in a $1').replace('every', 'in') + ' from this date.' : 'This one-time job will be marked complete.'}</p>
       </section>`, null);
   }
 
@@ -2555,7 +2567,16 @@ function setup() {
       case 'upkeep-view': S.upkeepView = el.dataset.v; render(); break;
       case 'edit': { S.editing = id; render(); const n = document.getElementById('a-' + id); if (n) n.focus(); break; }
       case 'done': S.editing = null; render(); break;
+      case 'bd-month': {
+        S.month = el.dataset.k; S.bdSel = null; S.editing = null; render();
+        const m = document.getElementById('bill-month'), sh = document.querySelector('.sheet');
+        if (m && sh && el.dataset.k !== monthKey(new Date())) m.scrollIntoView({ block: 'start', behavior: reduceMotion() ? 'auto' : 'smooth' });
+        else if (sh) sh.scrollTo({ top: 0 });
+        break;
+      }
+      case 'hint-ok': try { localStorage.setItem('eh-hint-swipe', '1'); } catch (_) {} render(); break;
       case 'toggle': {
+        try { localStorage.setItem('eh-hint-swipe', '1'); } catch (_) {}
         const b = findBill(id); const pay = getPay(b, S.month); const k = S.month;
         const prev = { paid_at: pay ? pay.paid_at || null : null, amount: pay ? (pay.amount != null ? pay.amount : null) : null, method: pay ? pay.method || null : null };
         const undo = () => savePayment(b, k, prev);
@@ -2601,7 +2622,7 @@ function setup() {
       case 'bill': openSheet('bill', id); break;
       case 'rental': openSheet('rental', id); break;
       case 'task': openSheet('task', id); break;
-      case 'task-done': openSheet('task-done', id); break;
+      case 'task-done': S.doneReceipt = null; openSheet('task-done', id); break;
       case 'log': openSheet('log', id); break;
       case 'new-bill': case 'new-rental': case 'new-task': case 'new-log': case 'new-appliance': case 'new-contractor': case 'new-doc': openSheet(act); break;
       case 'appliance': openSheet('appliance', id); break;
@@ -2735,6 +2756,22 @@ function setup() {
     }
   }
 
+  async function doneReceipt(el) {
+      const file = el.files && el.files[0]; el.value = ''; if (!file) return;
+      const tid = el.dataset.id; S.doneReceipt = { id: tid, file, msg: 'Reading the receipt…' };
+      const st = document.getElementById('dn-rc-status'); if (st) st.textContent = S.doneReceipt.msg;
+      const image = await shrinkImage(file, 1600);
+      let x = null;
+      try { if (image) x = await assist({ mode: 'receipt', image, type: 'image/jpeg' }); } catch (e) { S.doneReceipt.msg = '📎 Photo attached. ' + e.message; }
+      if (x) {
+        Object.assign(S.doneReceipt, { cost: x.total, vendor: x.vendor, msg: '📎 Receipt attached' + (x.total != null || x.vendor ? ' · read ' + [x.total != null ? money(x.total) : '', x.vendor || ''].filter(Boolean).join(' from ') + '. Check it, then Save.' : '. Couldn’t read the numbers; type them in.') });
+        const c = document.getElementById('dn-cost'), v = document.getElementById('dn-vendor'), d = document.getElementById('dn-date');
+        if (c && !c.value && x.total != null) c.value = x.total.toFixed(2);
+        if (v && x.vendor && (!v.value || v.value === (S.tasks.find((q) => q.id === tid) || {}).vendor)) v.value = x.vendor;
+        if (d && x.date && x.date <= isoDate(today())) d.value = x.date;
+      } else if (!S.doneReceipt.msg.startsWith('📎')) S.doneReceipt.msg = '📎 Photo attached.';
+      const st2 = document.getElementById('dn-rc-status'); if (st2) st2.textContent = S.doneReceipt.msg;
+  }
   function onChange(el) {
     const kind = el.dataset.change;
     if (kind === 'due' || kind === 'amount') {
@@ -2770,6 +2807,8 @@ function setup() {
     } else if (kind === 'payoff') {
       const v = parseFloat(String(el.value).replace(/[$,%]/g, ''));
       S.payoff = Object.assign({}, S.payoff, { [el.dataset.k]: isFinite(v) ? v : null }); render();
+    } else if (kind === 'done-receipt') {
+      doneReceipt(el);
     } else if (kind === 'scan-bill') {
       scanBill(el.files && el.files[0]); el.value = '';
     } else if (kind === 'turnover') {
@@ -2866,7 +2905,10 @@ function setup() {
       const on = val('done_on');
       if (!on) return fail('Pick the date it was done.');
       const logId = uuid(); const before = Object.assign({}, t);
-      saveLog({ id: logId, household_id: S.household.id, task_id: t.id, unit_id: t.unit_id, title: t.title, done_on: on, cost: num(val('cost')), vendor: val('vendor') || null, notes: val('notes') || null, receipt_path: null, created_at: new Date().toISOString() });
+      const logRow = { id: logId, household_id: S.household.id, task_id: t.id, unit_id: t.unit_id, title: t.title, done_on: on, cost: num(val('cost')), vendor: val('vendor') || null, notes: val('notes') || null, receipt_path: null, created_at: new Date().toISOString() };
+      saveLog(logRow);
+      const dr = S.doneReceipt && S.doneReceipt.id === t.id ? S.doneReceipt : null; S.doneReceipt = null;
+      if (dr && dr.file) uploadTo('receipts', dr.file).then((path) => { if (path && S.logs.some((l) => l.id === logId)) { saveLog(Object.assign({}, logRow, { receipt_path: path })); renderSoon(); } });
       const nt = Object.assign({}, t, { last_done: on, vendor: val('vendor') || t.vendor });
       if (t.interval_months) nt.next_due = addMonthsIso(on, t.interval_months); else { nt.next_due = null; nt.active = false; }
       saveTask(nt);
