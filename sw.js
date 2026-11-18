@@ -1,5 +1,5 @@
 // Service worker: offline app shell + push notifications.
-const VERSION = 'v2.13.3';
+const VERSION = 'v2.13.4';
 const CACHE = 'evergreen-' + VERSION;
 const SHELL = [
   './',
@@ -37,6 +37,7 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return; // never cache Supabase API calls
+  if (url.pathname.includes('/doorstep/')) return; // Doorstep is a separate app with its own service worker
 
   // Pages: network first so updates arrive, fall back to the cached shell offline.
   if (req.mode === 'navigate') {
