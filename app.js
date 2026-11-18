@@ -865,14 +865,15 @@
 
   function appView() {
     if (S.tour === undefined) S.tour = tourSeen() || !S.household ? null : 0;
-    const titles = { bills: 'Bills', rent: 'Rent', upkeep: 'House', summary: 'Home', personal: 'Personal', settings: 'Settings' };
+    if (!['summary', 'settings'].includes(S.tab) && !visibleTabs().some((t) => t[0] === S.tab)) S.tab = 'summary';
+    const titles = { bills: tabName('bills', 'Bills'), rent: tabName('rent', 'Rent'), upkeep: tabName('upkeep', 'House'), summary: tabName('summary', 'Home'), personal: tabName('personal', 'Personal'), settings: 'Settings' };
     const houseAdd = { upcoming: ['new-task', 'Add upkeep task'], history: ['new-log', 'Log a repair'], appliances: ['new-appliance', 'Add appliance'], pros: ['new-contractor', 'Add contractor'], docs: ['new-doc', 'Add document'] };
     const adds = { bills: ['new-bill', 'Add bill'], rent: ['new-rental', 'Add tenant'], upkeep: houseAdd[S.upkeepView], personal: ['personal-add', 'Add expense'] };
     const addr = S.household && S.household.address ? S.household.address.split(',')[0] : (S.household ? S.household.name : '');
     const offline = !S.online || S.pending
       ? `<span class="status-dot">${!S.online ? 'Offline' : 'Syncing'}${S.pending ? ' · ' + S.pending + ' unsaved' : ''}</span>` : '';
     const body = { bills: billsTab, rent: rentTab, upkeep: upkeepTab, summary: summaryTab, personal: personalTab, settings: settingsTab }[S.tab]();
-    const tabs = [['summary', 'Home'], ['bills', 'Bills'], ['rent', 'Rent'], ['upkeep', 'House'], ['personal', 'Personal']]
+    const vt = visibleTabs(); const tabs = vt
       .map(([id, l]) => `<button class="tab" data-act="tab" data-tab="${id}" ${S.tab === id ? 'aria-current="page"' : ''}>${ICON[id]}<span>${l}</span></button>`).join('');
     const add = adds[S.tab];
     return `<div class="shell">
@@ -881,7 +882,7 @@
         <div class="topbar-row"><h1 class="display">${esc(titles[S.tab])}</h1><span class="topbar-actions"><button class="iconbtn gearbtn" data-act="tab" data-tab="settings" aria-label="Settings" title="Settings" ${S.tab === 'settings' ? 'aria-current="page"' : ''}>${ICON.settings}</button>${add ? `<button class="addbtn" data-act="${add[0]}" aria-label="${add[1]}">${ICON.plus}<span>Add</span></button>` : ''}</span></div>
       </header>
       <main class="main">${body}</main>
-      <nav class="tabbar" aria-label="App sections"><div class="tabbar-inner">${tabs}</div></nav>
+      <nav class="tabbar" aria-label="App sections"><div class="tabbar-inner" style="grid-template-columns:repeat(${vt.length}, minmax(0, 1fr))">${tabs}</div></nav>
       ${S.sheet ? sheetView() : ''}
       ${S.tab !== 'settings' && !S.sheet ? '<button class="fab" data-act="ask-open" aria-label="Ask or add: type, speak or scan a bill"><span aria-hidden="true">✦</span> Ask or add</button>' : ''}
       ${S.story ? storyView() : ''}
@@ -1850,7 +1851,7 @@
       <p class="small muted">Your home’s bills are kept out of the rental totals above and out of the tax report.</p>
     </section>`;
   }
-  function summaryTab() { return foldSections(summaryTabRaw(), { 'Money in and out, last 6 months': true, 'Bills by place': false, 'Cash-flow forecast': false }); }
+  function summaryTab() { return foldSections(applyHomeLayout(summaryTabRaw()), { 'Money in and out, last 6 months': true, 'Bills by place': false, 'Cash-flow forecast': false }); }
   function summaryHeadline(k) {
     const isCur = k === monthKey(new Date()), isPast = k < monthKey(new Date());
     const rm = rentMonth(k);
@@ -1934,6 +1935,44 @@
     return `${monthNav()}${hero}${rows.length ? body + chips : chips + body}${catCard}${homeNote}
       <p class="small muted" style="margin:0">Personal expenses aren’t counted in the rental totals or the tax report.</p>`;
   }
+  // ===== Customize (saved on this device) =====
+  const TAB_DEFS = [['bills', 'Bills'], ['rent', 'Rent'], ['upkeep', 'House'], ['personal', 'Personal']];
+  const HOME_DEFS = [['headline', 'Month in one sentence'], ['income', 'Income & expenses'], ['week', 'Your week'], ['recap', 'AI recap'], ['stats', 'Rental numbers'], ['flow', 'Where the rent goes'], ['inout', '6-month chart'], ['ask', 'Ask about your house'], ['forecast', 'Next 3 months'], ['home', 'Your home (Cedarcroft)'], ['breakdown', 'Breakdown'], ['tax', 'Tax report']];
+  function getCustom() { let c = {}; try { c = JSON.parse(localStorage.getItem('eh-custom') || '{}') || {}; } catch (_) {} c.tabs = c.tabs || {}; c.home = c.home || {}; c.names = c.names || {}; return c; }
+  function setCustom(c) { try { localStorage.setItem('eh-custom', JSON.stringify(c)); } catch (_) {} }
+  function ordered(defs, cfg) { const ids = defs.map((d) => d[0]); const ord = (cfg.order || []).filter((x) => ids.includes(x)); ids.forEach((x) => { if (!ord.includes(x)) ord.push(x); }); return ord.map((id) => defs.find((d) => d[0] === id)); }
+  function visibleTabs() { const c = getCustom(); const hid = c.tabs.hidden || []; return [['summary', c.names.summary || 'Home']].concat(ordered(TAB_DEFS, c.tabs).filter((d) => !hid.includes(d[0])).map(([id, l]) => [id, c.names[id] || l])); }
+  function tabName(id, dflt) { return getCustom().names[id] || dflt; }
+  function applyHomeLayout(html) {
+    const parts = html.split(/<!--b:(\w+)-->/); const top = parts[0]; const blocks = {};
+    for (let i = 1; i < parts.length; i += 2) blocks[parts[i]] = parts[i + 1];
+    const c = getCustom(); const hid = c.home.hidden || [];
+    return top + ordered(HOME_DEFS, c.home).map((d) => d[0]).filter((k) => blocks[k] != null && !hid.includes(k)).map((k) => blocks[k]).join('');
+  }
+  function moveIn(list, id, dir) { const i = list.indexOf(id), j = i + dir; if (i < 0 || j < 0 || j >= list.length) return list; const a = list.slice(); [a[i], a[j]] = [a[j], a[i]]; return a; }
+  function customizeCard() {
+    const c = getCustom(); const th = c.tabs.hidden || [], hh = c.home.hidden || [];
+    const tabs = ordered(TAB_DEFS, c.tabs);
+    const home = ordered(HOME_DEFS, c.home);
+    const arrows = (kind, id, i, n) => `<span class="cz-arrows"><button type="button" class="iconbtn sm" data-act="cz-move" data-kind="${kind}" data-id="${id}" data-dir="-1" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>↑</button><button type="button" class="iconbtn sm" data-act="cz-move" data-kind="${kind}" data-id="${id}" data-dir="1" aria-label="Move down" ${i === n - 1 ? 'disabled' : ''}>↓</button></span>`;
+    const removed = S.bills.filter((b) => b.active === false).sort((a, b) => a.name.localeCompare(b.name));
+    return `<section class="card" aria-label="Customize">
+      <h2>Customize</h2>
+      <p class="small muted" style="margin:-6px 0 0">Show, hide, rename and reorder. Saved on this phone.</p>
+      <p class="lab small" style="margin:4px 0 0">Tabs</p>
+      <ul class="cz-list">
+        <li><span class="cz-name"><input class="input cz-input" value="${esc(c.names.summary || 'Home')}" data-change="cz-name" data-id="summary" aria-label="Name for the Home tab" maxlength="14"></span><span class="small muted">always first</span></li>
+        ${tabs.map(([id, l], i) => `<li class="${th.includes(id) ? 'off' : ''}"><label class="cz-switch"><input type="checkbox" data-change="cz-show" data-kind="tabs" data-id="${id}" ${th.includes(id) ? '' : 'checked'} aria-label="Show ${esc(l)} tab"></label><span class="cz-name"><input class="input cz-input" value="${esc(c.names[id] || l)}" data-change="cz-name" data-id="${id}" aria-label="Name for the ${esc(l)} tab" maxlength="14"></span>${arrows('tabs', id, i, tabs.length)}</li>`).join('')}
+      </ul>
+      <p class="lab small" style="margin:6px 0 0">Home page cards</p>
+      <ul class="cz-list">
+        ${home.map(([id, l], i) => `<li class="${hh.includes(id) ? 'off' : ''}"><label class="cz-switch"><input type="checkbox" data-change="cz-show" data-kind="home" data-id="${id}" ${hh.includes(id) ? '' : 'checked'} aria-label="Show ${esc(l)}"></label><span class="cz-name">${esc(l)}</span>${arrows('home', id, i, home.length)}</li>`).join('')}
+      </ul>
+      <div class="btns"><button type="button" class="btn" data-act="cz-reset" style="flex:1">Reset to default</button></div>
+      <p class="lab small" style="margin:6px 0 0">Removed bills and subscriptions</p>
+      ${removed.length ? `<ul class="cz-list">${removed.map((b) => `<li><span class="cz-name">${esc(billTitle(b))} <span class="small muted">· ${esc(unitName(b.unit_id))}</span></span><button type="button" class="btn sm" data-act="bill-restore" data-id="${b.id}">Restore</button><button type="button" class="btn sm danger" data-act="bill-forget" data-id="${b.id}">${S.forgetArm === b.id ? 'Sure?' : 'Delete'}</button></li>`).join('')}</ul>` : '<p class="small muted" style="margin:0">Nothing removed. Use “Remove from my list” on any bill to hide it here without losing its history.</p>'}
+    </section>`;
+  }
   function summaryTabRaw() {
     const sp = billSplit(S.month);
     const md = { paid: sp.rentalPaid };
@@ -1966,19 +2005,19 @@
           <div class="pair"><div class="b in" style="height:${Math.round((r.inc / max) * 100)}%" title="In ${money0(r.inc)}"></div><div class="b out" style="height:${Math.round((r.out / max) * 100)}%" title="Out ${money0(r.out)}"></div></div>
           <span>${monthLabel(r.k, true)}</span></div>`).join('')}</div>`;
     return `${monthNav()}
-      ${summaryHeadline(S.month)}
-      ${incomeCard(S.month)}
-      ${storyBar()}
-      ${recapCard()}
-      <h2 class="section-h" style="margin:0">${esc(propName)} · rental${homes.length ? ' <span class="small muted" style="font-weight:500">(without ' + esc(homes.join(', ')) + ')</span>' : ''}</h2>
+      <!--b:headline-->${summaryHeadline(S.month)}
+      <!--b:income-->${incomeCard(S.month)}
+      <!--b:week-->${storyBar()}
+      <!--b:recap-->${recapCard()}
+      <!--b:stats--><h2 class="section-h" style="margin:0">${esc(propName)} · rental${homes.length ? ' <span class="small muted" style="font-weight:500">(without ' + esc(homes.join(', ')) + ')</span>' : ''}</h2>
       <div class="grid2">
         <div class="stat"><span class="small muted">Rent collected</span><span class="v display num">${money(rm.received)}</span></div>
         <div class="stat"><span class="small muted">Bills paid</span><span class="v display num">${money(md.paid)}</span></div>
         <div class="stat"><span class="small muted">Upkeep spent</span><span class="v display num">${money(up)}</span></div>
         <div class="stat"><span class="small muted">Net for ${monthLabel(S.month, true)}</span><span class="v display num" style="color:${net < 0 ? 'var(--late-fg)' : 'var(--paid-fg)'}">${net < 0 ? '−' : ''}${money(Math.abs(net))}</span></div>
       </div>
-      ${flowCard()}
-      <section class="card" aria-label="Money in and out, last 6 months">
+      <!--b:flow-->${flowCard()}
+      <!--b:inout--><section class="card" aria-label="Money in and out, last 6 months">
         <h2>In vs. out · 6 months</h2>
         <div class="legend small"><span><i class="sw in"></i>Rent in</span><span><i class="sw out"></i>Bills + upkeep out</span></div>
         <div class="hist2">${rows.map((r) => `<div class="col ${r.k === S.month ? 'cur' : ''}">
@@ -1988,17 +2027,17 @@
           ${rows.slice().reverse().map((r) => `<tr><th scope="row">${monthLabel(r.k, true)}</th><td class="num">${money0(r.inc)}</td><td class="num">${money0(r.out)}</td><td class="num" style="color:${r.net < 0 ? 'var(--late-fg)' : 'inherit'}">${r.net < 0 ? '−' : ''}${money0(Math.abs(r.net))}</td></tr>`).join('')}
         </tbody></table></details>
       </section>
-      <button class="askcard" data-act="ask-open"><span class="askicon" aria-hidden="true">✦</span><span class="stack" style="gap:2px;text-align:left"><strong>Ask about your house</strong><span class="small muted">“What did I spend on repairs this year?”</span></span><span aria-hidden="true">›</span></button>
-      ${forecastCard()}
-      ${homeCard()}
-      <section class="card" aria-label="Bills by place">
+      <!--b:ask--><button class="askcard" data-act="ask-open"><span class="askicon" aria-hidden="true">✦</span><span class="stack" style="gap:2px;text-align:left"><strong>Ask about your house</strong><span class="small muted">“What did I spend on repairs this year?”</span></span><span aria-hidden="true">›</span></button>
+      <!--b:forecast-->${forecastCard()}
+      <!--b:home-->${homeCard()}
+      <!--b:breakdown--><section class="card" aria-label="Bills by place">
         <h2>Breakdown · ${monthLabel(S.month, true)}</h2><p class="lab small" style="margin:0">By place</p>
         ${byFloor.map((g) => `<div class="stack" style="gap:6px"><div class="row between small"><span>${esc(g.name)} <span class="muted">· ${g.n} ${g.n === 1 ? 'bill' : 'bills'}</span></span><strong class="num">${money(g.total)}</strong></div><div class="meter"><div style="width:${Math.max(2, Math.round((g.total / fMax) * 100))}%"></div></div></div>`).join('')}
         <p class="lab small" style="margin:6px 0 0">By category</p>
         ${(() => { const rr = rentMonth(S.month).rows.filter((x) => !isHome(x.r.unit_id) && x.due != null); return rr.length ? `<div class="row between small"><span>Rent <span class="tag inc-tag">Income</span> <span class="muted">· ${rr.length}</span></span><strong class="num ok-num">+${money(rr.reduce((t, x) => t + (x.due || 0), 0))}</strong></div>` : ''; })()}
         ${byCat.map((g) => `<div class="row between small"><span>${esc(g.name)} <span class="muted">· ${g.n}</span></span><strong class="num">${money(g.total)}</strong></div>`).join('')}
       </section>
-      ${fold('tax', 'Tax report · ' + (S.taxYear || Number(S.month.slice(0, 4))), taxCard(), false)}`;
+      <!--b:tax-->${fold('tax', 'Tax report · ' + (S.taxYear || Number(S.month.slice(0, 4))), taxCard(), false)}`;
   }
 
   // ----- Tax report (Schedule E style) -----
@@ -2121,6 +2160,7 @@
     const th = getTheme();
     return `
       ${guideCard()}
+      ${customizeCard()}
       <section class="card" aria-label="Appearance">
         <h2>Appearance</h2>
         <div class="seg theme-seg" role="group" aria-label="Light or dark">${[['auto', 'Automatic'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<button data-act="theme" data-v="${v}" aria-pressed="${th === v}">${l}</button>`).join('')}</div>
@@ -2176,7 +2216,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.12</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.13</p>`;
   }
 
   function importCard() {
@@ -2341,7 +2381,7 @@ function setup() {
   function f(id, label, input) { return `<div class="field"><label for="${id}">${label}</label>${input}</div>`; }
   function inp(id, name, value, extra) { return `<input class="input" id="${id}" name="${name}" value="${esc(value == null ? '' : value)}" ${extra || ''}>`; }
   function moneyInp(id, name, v) { return inp(id, name, v != null ? Number(v).toFixed(2) : '', 'inputmode="decimal" placeholder="0.00"'); }
-  function sheetShell(title, form, inner, del) {
+  function sheetShell(title, form, inner, del, extra) {
     return `<div class="sheet-bg" data-act="sheet-close-bg"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
       <div class="grabber" aria-hidden="true"></div>
       <div class="sheet-head"><h2 id="sheet-title" class="display">${esc(title)}</h2><button class="iconbtn" data-act="sheet-close" aria-label="Close">${ICON.close}</button></div>
@@ -2349,6 +2389,7 @@ function setup() {
         ${inner}
         ${S.sheetErr ? `<p class="err" role="alert">${esc(S.sheetErr)}</p>` : ''}
         <button class="btn primary block" type="submit">Save</button>
+        ${extra || ''}
         ${del ? `<button type="button" class="btn block danger" data-act="sheet-delete">${S.deleteArm ? 'Tap again to delete' : esc(del)}</button>` : ''}
       </form>
     </div></div>`;
@@ -2580,7 +2621,7 @@ function setup() {
         <h2>${isNew ? 'New bill' : 'Bill settings'}</h2>
         ${f('b-name', 'Provider / name', inp('b-name', 'name', b.name, 'required placeholder="e.g. Optimum internet"'))}
         <div class="grid2">${f('b-label', 'Label', inp('b-label', 'label', b.label, 'placeholder="Optional"'))}${f('b-acct', 'Account #', inp('b-acct', 'account_number', b.account_number, 'inputmode="numeric"'))}</div>
-        <div class="grid2">${f('b-cat', 'Category', `<select class="input" id="b-cat" name="category">${opts(CATEGORIES, b.category)}</select>`)}${f('b-unit', 'Where', `<select class="input" id="b-unit" name="unit_id">${unitOptions(b.unit_id)}</select>`)}</div>
+        <div class="grid2">${f('b-cat', 'Category', `<input class="input" id="b-cat" name="category" list="cat-list" value="${esc(b.category || 'Other')}" autocomplete="off"><datalist id="cat-list">${Array.from(new Set(CATEGORIES.concat(S.bills.map((x) => x.category).filter(Boolean)))).map((c) => `<option value="${esc(c)}">`).join('')}</datalist>`)}${f('b-unit', 'Where', `<select class="input" id="b-unit" name="unit_id">${unitOptions(b.unit_id)}</select>`)}</div>
         <div class="grid2">${f('b-day', 'Due day', inp('b-day', 'due_day', b.due_day, 'type="number" inputmode="numeric" min="1" max="31"'))}${f('b-def', 'Usual amount ($)', moneyInp('b-def', 'default_amount', b.default_amount))}</div>
         <label class="checkrow"><input type="checkbox" name="fixed" ${b.amount_type === 'fixed' ? 'checked' : ''}> Same amount every month</label>
         <label class="checkrow"><input type="checkbox" name="autopay" ${b.autopay ? 'checked' : ''}> Paid automatically (autopay)</label>
@@ -2592,7 +2633,7 @@ function setup() {
         ${f('b-notes', 'Notes', `<textarea class="input" id="b-notes" name="notes">${esc(b.notes)}</textarea>`)}
       </section>`;
     const settings = isNew ? details : `<details class="card fold editfold" data-fold="bill-edit" ${isOpen('bill-edit', false) ? 'open' : ''}><summary><h2>Edit bill</h2><span class="small muted">name, account #, due day, autopay…</span><span class="chev" aria-hidden="true"></span></summary><div class="fold-body">${details.replace(/^<section class="card">\s*<h2>Bill settings<\/h2>/, '').replace(/<\/section>$/, '')}</div></details>`;
-    return sheetShell(isNew ? 'Add bill' : billTitle(b), 'bill', (isNew ? '' : billDetailTop(b, pay)) + month + (isNew ? '' : loan) + settings + (isNew ? loan : ''), isNew ? null : 'Delete bill and its history');
+    return sheetShell(isNew ? 'Add bill' : billTitle(b), 'bill', (isNew ? '' : billDetailTop(b, pay)) + month + (isNew ? '' : loan) + settings + (isNew ? loan : ''), isNew ? null : 'Delete bill and its history', isNew ? '' : '<button type="button" class="btn block" data-act="bill-archive">Remove from my list <span class="small muted">· keeps its history</span></button>');
   }
 
   function rentalSheet(sh) {
@@ -2807,6 +2848,11 @@ function setup() {
         setTimeout(() => { const n = document.getElementById(el.dataset.name ? 'b-def' : 'b-name'); if (n) n.focus(); }, 300);
         break;
       }
+      case 'cz-move': { const c = getCustom(); const kind = el.dataset.kind; const defs = kind === 'tabs' ? TAB_DEFS : HOME_DEFS; c[kind].order = moveIn(ordered(defs, c[kind]).map((d) => d[0]), el.dataset.id, +el.dataset.dir); setCustom(c); render(); break; }
+      case 'cz-reset': setCustom({}); toast('Back to the default layout'); render(); break;
+      case 'bill-archive': { const b = findBill(S.sheet.id); if (!b) break; saveBill(Object.assign({}, b, { active: false })); S.sheet = null; render(); toast(billTitle(b) + ' removed', () => saveBill(Object.assign({}, b, { active: true }))); break; }
+      case 'bill-restore': { const b = findBill(id); if (!b) break; saveBill(Object.assign({}, b, { active: true })); render(); toast(billTitle(b) + ' is back'); break; }
+      case 'bill-forget': { if (S.forgetArm !== id) { S.forgetArm = id; render(); setTimeout(() => { if (S.forgetArm === id) { S.forgetArm = null; renderSoon(); } }, 4000); break; } S.forgetArm = null; deleteBill(id); render(); toast('Deleted for good'); break; }
       case 'tour-next': if (S.tour < TOUR.length - 1) { S.tour++; render(); } else endTour(); break;
       case 'tour-skip': endTour(); break;
       case 'tour-again': S.tour = 0; window.scrollTo(0, 0); render(); break;
@@ -2969,6 +3015,12 @@ function setup() {
       S.payoff = Object.assign({}, S.payoff, { [el.dataset.k]: isFinite(v) ? v : null }); render();
     } else if (kind === 'done-receipt') {
       doneReceipt(el);
+    } else if (kind === 'cz-show') {
+      const c = getCustom(); const k = el.dataset.kind; const h = new Set(c[k].hidden || []);
+      if (el.checked) h.delete(el.dataset.id); else h.add(el.dataset.id);
+      c[k].hidden = Array.from(h); setCustom(c); render();
+    } else if (kind === 'cz-name') {
+      const c = getCustom(); const v = el.value.trim().slice(0, 14); if (v) c.names[el.dataset.id] = v; else delete c.names[el.dataset.id]; setCustom(c); render(); toast('Tab renamed');
     } else if (kind === 'sound') {
       try { localStorage.setItem('eh-sound', el.checked ? '1' : '0'); } catch (_) {}
       if (el.checked) feedback(true); toast(el.checked ? 'Sound on' : 'Sound off');
