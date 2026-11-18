@@ -5,7 +5,7 @@
   const API = CFG.SUPABASE_URL + '/functions/v1/tenant';
   const token = new URLSearchParams(location.search).get('t') || '';
   const el = document.getElementById('tp');
-  let data = null, sending = false, msg = '', err = '';
+  let data = null, sending = false, msg = '', err = '', pSending = false, pErr = '';
 
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const money = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -52,6 +52,17 @@
         <div class="row between wrap" style="gap:8px"><strong style="font-size:18px;word-break:break-all">${esc(d.pay_zelle)}</strong><button type="button" class="btn" id="copy-zelle">Copy</button></div>
         ${d.pay_note ? `<p class="small muted">${esc(d.pay_note)}</p>` : `<p class="small muted">Memo: ${esc(monthName(thisPeriod()).split(' ')[0])} rent${d.unit ? ', ' + esc(d.unit) : ''}</p>`}
       </section>` : ''}
+      ${(() => {
+        if (d.rent == null || left <= 0) return '';
+        const pend = (d.notices || []).find((n) => n.period === thisPeriod() && n.status === 'pending');
+        if (pend) return `<section class="card" aria-label="Payment sent"><h2>Payment sent ✓</h2><p class="lead" style="margin:0">You told your landlord you paid <strong>${money(pend.amount)}</strong>${pend.method ? ' by ' + esc(pend.method) : ''} on ${fmt(pend.created_at)}.</p><p class="small muted">It will show as paid here once they confirm it.</p></section>`;
+        return `<form class="card" id="paid" novalidate><h2>Already paid?</h2><p class="small muted" style="margin:-6px 0 0">Let your landlord know so they can mark it received.</p>
+          <div class="row" style="gap:8px"><div class="field" style="flex:1"><label for="p-amt">Amount</label><input class="input num" id="p-amt" name="amount" inputmode="decimal" value="${left.toFixed(2)}"></div>
+          <div class="field" style="flex:1"><label for="p-method">Paid with</label><select class="input" id="p-method" name="method">${['Zelle', 'Venmo', 'Check', 'Cash', 'Bank transfer', 'Other'].map((m) => `<option ${m === 'Zelle' ? 'selected' : ''}>${m}</option>`).join('')}</select></div></div>
+          <div class="field"><label for="p-note">Note <span class="muted">(optional)</span></label><input class="input" id="p-note" name="note" maxlength="200" placeholder="e.g. Sent from my partner’s account"></div>
+          ${pErr ? `<p class="err" role="alert">${esc(pErr)}</p>` : ''}
+          <button class="btn primary block" type="submit" ${pSending ? 'disabled' : ''}>${pSending ? 'Sending…' : 'Tell my landlord I paid'}</button></form>`;
+      })()}
       ${d.payments.length ? `<section class="card" aria-label="Payment history"><h2>Payment history</h2>
         <table class="tbl"><thead><tr><th scope="col">Month</th><th scope="col">Rent</th><th scope="col">Paid</th></tr></thead><tbody>
         ${d.payments.map((p) => `<tr><th scope="row">${esc(monthName(p.period))}</th><td class="num">${money(p.amount_due)}</td><td class="num">${money(p.amount_received)}</td></tr>`).join('')}
@@ -96,6 +107,21 @@
   });
   document.addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (e.target.id === 'paid') {
+      if (pSending) return;
+      const fd = new FormData(e.target); pErr = '';
+      const amount = parseFloat(String(fd.get('amount') || '').replace(/[$,]/g, ''));
+      if (!(amount > 0)) { pErr = 'Enter the amount you paid.'; return render(); }
+      pSending = true; render();
+      try {
+        const r = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: CFG.SUPABASE_ANON_KEY },
+          body: JSON.stringify({ t: token, action: 'paid', amount, method: fd.get('method'), note: fd.get('note') }) });
+        const j = await r.json(); pSending = false;
+        if (!r.ok) { pErr = j.error || 'Couldn’t send it.'; return render(); }
+        await load();
+      } catch (_) { pSending = false; pErr = 'Couldn’t send it. Check your internet and try again.'; render(); }
+      return;
+    }
     if (sending) return;
     const fd = new FormData(e.target);
     const title = String(fd.get('title') || '').trim();

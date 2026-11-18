@@ -1,6 +1,7 @@
 // Public tenant page API. A tenant's private link carries their rental's portal_token.
 // GET  ?t=TOKEN               -> name, unit, rent, last 6 months of rent, their repair requests
 // POST {t, title, details, urgency, photo?: {name, type, base64}} -> new repair request (+ push to the household)
+// POST {t, action: 'paid', amount, method, note} -> "I've paid" notice for the landlord to confirm (+ push)
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 import webpush from 'npm:web-push@3.6.7';
 
@@ -39,16 +40,17 @@ Deno.serve(async (req) => {
       if (!r) return json({ error: 'This link isn’t active. Ask your landlord for a new one.' }, 404);
       const now = new Date();
       const since = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1)).toISOString().slice(0, 10);
-      const [{ data: pays }, { data: reqs }] = await Promise.all([
+      const [{ data: pays }, { data: reqs }, { data: notes }] = await Promise.all([
         db.from('rent_payments').select('period,amount_due,amount_received,received_at,method').eq('rental_id', r.id).gte('period', since).order('period', { ascending: false }),
         db.from('repair_requests').select('id,title,status,reply,created_at,updated_at').eq('rental_id', r.id).order('created_at', { ascending: false }).limit(20),
+        db.from('rent_notices').select('period,amount,method,status,created_at').eq('rental_id', r.id).gte('period', since).order('created_at', { ascending: false }).limit(10),
       ]);
       // deno-lint-ignore no-explicit-any
       const rr = r as any;
       return json({
         tenant: r.tenant_name, unit: rr.units?.name ?? null, house: rr.households?.name ?? null, address: rr.households?.address ?? null,
         rent: r.rent_amount, due_day: r.due_day, grace_days: r.grace_days, late_fee: r.late_fee, lease_end: r.lease_end,
-        payments: pays ?? [], requests: reqs ?? [],
+        payments: pays ?? [], requests: reqs ?? [], notices: notes ?? [],
         pay_zelle: rr.households?.pay_zelle ?? null, pay_note: rr.households?.pay_note ?? null,
       });
     }
@@ -56,6 +58,22 @@ Deno.serve(async (req) => {
       const body = await req.json().catch(() => ({}));
       const r = await rentalFor(body.t ?? null);
       if (!r) return json({ error: 'This link isn’t active.' }, 404);
+      if (body.action === 'paid') {
+        const amount = Math.round(Number(body.amount) * 100) / 100;
+        if (!(amount > 0 && amount < 100000)) return json({ error: 'Enter the amount you paid.' }, 400);
+        const method = ['Zelle', 'Venmo', 'Check', 'Cash', 'Bank transfer', 'Other'].includes(body.method) ? body.method : 'Other';
+        const note = String(body.note ?? '').trim().slice(0, 200) || null;
+        const dayAgo = new Date(Date.now() - 86400000).toISOString();
+        const { count } = await db.from('rent_notices').select('id', { count: 'exact', head: true }).eq('rental_id', r.id).gte('created_at', dayAgo);
+        if ((count ?? 0) >= 5) return json({ error: 'You’ve already told your landlord today. They’ll confirm it soon.' }, 429);
+        const now = new Date(); const period = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`;
+        const { error } = await db.from('rent_notices').insert({ household_id: r.household_id, rental_id: r.id, period, amount, method, note });
+        if (error) return json({ error: 'Couldn’t send it. Please try again.' }, 500);
+        // deno-lint-ignore no-explicit-any
+        const unit = (r as any).units?.name ?? 'your rental';
+        await notifyHousehold(r.household_id, { title: `${r.tenant_name ?? 'Your tenant'} says rent is paid`, body: `$${amount.toFixed(2)} by ${method} · ${unit}. Open Rent to confirm.`, tag: 'rent-notice-' + r.id, url: './' });
+        return json({ ok: true });
+      }
       const title = String(body.title ?? '').trim().slice(0, 120);
       if (!title) return json({ error: 'Say what needs fixing.' }, 400);
       const details = String(body.details ?? '').trim().slice(0, 4000) || null;
