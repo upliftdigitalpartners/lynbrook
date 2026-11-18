@@ -2230,7 +2230,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.13.3</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.13.4</p>`;
   }
 
   function importCard() {
