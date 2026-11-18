@@ -33,6 +33,7 @@
       const n = JSON.parse(sessionStorage.getItem('eh-nav') || 'null');
       if (!n || Date.now() - n.t > 10 * 60 * 1000) return;
       ['tab', 'month', 'upkeepView', 'billsView', 'unit'].forEach((k) => { if (n[k]) S[k] = n[k]; });
+      if (S.unit === 'shared') S.unit = 'all';
       S.restoreScroll = n.y || 0;
     } catch (_) {}
   })();
@@ -1018,7 +1019,7 @@
     const md = billMonth(S.month);
     const pct = md.total > 0 ? Math.round((md.paid / md.total) * 100) : 0;
     const floors = S.units.filter((u) => isFloor(u.name) && !isPersonal(u.id));
-    const unitChips = [['all', 'Everything'], ['shared', 'Shared']].concat(floors.map((u) => [u.id, u.name]))
+    const unitChips = [['all', 'Everything']].concat(floors.map((u) => [u.id, u.name]))
       .map(([id, l]) => `<button class="chip" data-act="unit" data-unit="${esc(id)}" aria-pressed="${S.unit === id}">${esc(l)}</button>`).join('');
     const isPaid = (r) => !!(r.pay && r.pay.paid_at);
     const CF = { Gas: ['Gas'], Electric: ['Electric'], util: ['Gas', 'Electric', 'Water'] };
@@ -2229,7 +2230,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.13.2</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.13.3</p>`;
   }
 
   function importCard() {
