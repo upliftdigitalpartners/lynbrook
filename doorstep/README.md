@@ -54,9 +54,23 @@ npx supabase functions deploy assist scan-bill tenant weather --project-ref aprl
 - **Your data** (Settings): **Download my data** (JSON) and **Delete my account**. Deleting removes your login and any property only you are in, with its files (`delete_my_account()`). Neither is offered in the demo.
 - **Daily AI allowance:** 80 a day per person, and 25 a day shared by everyone in the demo (`ai_usage` + `bump_ai()`), enforced in `assist` and `scan-bill`.
 
+## Production hardening (migration 014)
+
+- **Access rules:** every table has row-level security. Only an owner can delete a property, and account functions can't be called by signed-out visitors.
+- **Uploads:** the `receipts` bucket accepts photos and PDFs only, up to 10 MB each.
+- **Demo:** `demo_guard()` runs every 15 minutes and puts the demo login's email and password back. The full demo is rebuilt nightly.
+- **Backups:** the `backup` function saves every table to the private `backups` bucket nightly at 08:23 UTC and keeps 14 days (`db/YYYY-MM-DD.json`). Supabase's free plan has no backups of its own.
+- **Error reports:** the app sends a few per visit to `app_errors` (throttled, kept 30 days). Read them in the Supabase Table Editor.
+- **Contact:** feedback forms on the landing page and in Settings save to `feedback`. Read them in the Table Editor. The Privacy and Terms pages point to the form.
+- **Password reset:** "Forgot password?" sends a reset link. The redirect allow list only permits Doorstep. Supabase's built-in email allows about 2 emails an hour.
+- **Browser security:** a Content-Security-Policy meta tag (scripts only from the site), a referrer policy, and a no-referrer, noindex tenant page.
+- **Sharing:** Open Graph and Twitter tags, plus a 1200×630 preview image (`og.png`).
+- **Accessibility:** automated checks (axe) show no serious issues on the landing, Home, Rent, bill, Settings and tenant screens.
+
 ## Still needed
 
 - **AI features** (Ask, scan a bill, recap) need a `GROQ_API_KEY` secret on the Doorstep Supabase project: Project Settings › Edge Functions › Secrets. Use a separate Groq key from Evergreen's, so demo visitors can't use up Evergreen's limits.
 - **Texting or emailing tenants automatically** needs a paid SMS or email service (for example Twilio or Resend).
 - **A custom domain** and **online rent payments** (Stripe) need accounts in your name.
-- Add a **contact email** to the Privacy and Terms pages, and have someone qualified review them before a public launch.
+- Have someone qualified review the Privacy and Terms pages before a public launch.
+- **For higher volume:** your own email sender (SMTP) for password resets and sign-up confirmation, a CAPTCHA (Cloudflare Turnstile) on sign-up, and Supabase Pro for daily backups.
