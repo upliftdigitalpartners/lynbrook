@@ -27,6 +27,18 @@
     editing: null, sheet: null, sheetErr: '', deleteArm: false,
     online: navigator.onLine, pending: 0, pushState: 'unknown', installEvt: null, busy: false
   };
+  // A reload (pull-to-refresh, an update) keeps you where you were. A fresh open, or 10+ minutes later, starts on Home.
+  (function restoreNav() {
+    try {
+      const n = JSON.parse(sessionStorage.getItem('eh-nav') || 'null');
+      if (!n || Date.now() - n.t > 10 * 60 * 1000) return;
+      ['tab', 'month', 'upkeepView', 'billsView', 'unit'].forEach((k) => { if (n[k]) S[k] = n[k]; });
+      S.restoreScroll = n.y || 0;
+    } catch (_) {}
+  })();
+  function saveNav() { try { sessionStorage.setItem('eh-nav', JSON.stringify({ tab: S.tab, month: S.month, upkeepView: S.upkeepView, billsView: S.billsView, unit: S.unit, y: window.scrollY, t: Date.now() })); } catch (_) {} }
+  window.addEventListener('pagehide', saveNav);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNav(); });
 
   // ---------- helpers ----------
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -802,7 +814,7 @@
     else if (S.view === 'recovery') app.innerHTML = recoveryView();
     else if (S.view === 'join') app.innerHTML = joinView();
     else app.innerHTML = appView();
-    if (S.view === 'app') { window.scrollTo(0, y); updateBadge(); afterRender(); }
+    if (S.view === 'app') { if (S.restoreScroll != null && document.documentElement.scrollHeight > S.restoreScroll) { window.scrollTo(0, S.restoreScroll); S.restoreScroll = null; } else window.scrollTo(0, y); updateBadge(); afterRender(); saveNav(); }
     const ns = app.querySelector('.sheet'); if (ns && sheetScroll != null) ns.scrollTop = sheetScroll;
     if (keep) {
       const n = document.getElementById(keep.id);
@@ -2217,7 +2229,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.13.1</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.13.2</p>`;
   }
 
   function importCard() {
