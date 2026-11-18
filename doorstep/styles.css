@@ -823,3 +823,6 @@ button.ut.on { box-shadow: 0 0 0 2px var(--accent); }
 :root[data-theme="dark"] .demobar { background: #3A3018; color: #F2D58A; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .demobar { background: #3A3018; color: #F2D58A; } }
 .demobar .btn { background: #6B4E12; color: #FFF3D6; border: 0; }
+
+.housebtn { border: 0; background: transparent; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; text-transform: inherit; letter-spacing: inherit; display: inline-flex; gap: 4px; align-items: center; min-height: 28px; }
+.houserow { width: 100%; display: flex; align-items: center; gap: 10px; border: 0; background: transparent; padding: 6px 4px; font: inherit; color: var(--ink); cursor: pointer; text-align: left; }
