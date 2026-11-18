@@ -146,7 +146,7 @@
   // ---------- local cache + offline outbox ----------
   const cacheKey = () => 'ds-cache-' + (S.user ? S.user.id : 'anon');
   const OUTBOX = 'ds-outbox';
-  const CACHED = ['houses', 'household', 'member', 'units', 'bills', 'payments', 'rentals', 'rentPays', 'tasks', 'logs', 'imports', 'appliances', 'contractors', 'documents', 'leases', 'inspections', 'requests'];
+  const CACHED = ['notices', 'houses', 'household', 'member', 'units', 'bills', 'payments', 'rentals', 'rentPays', 'tasks', 'logs', 'imports', 'appliances', 'contractors', 'documents', 'leases', 'inspections', 'requests'];
   function saveCache() {
     try { const o = {}; CACHED.forEach((k) => { o[k] = S[k]; }); localStorage.setItem(cacheKey(), JSON.stringify(o)); } catch (_) {}
   }
@@ -218,10 +218,12 @@
         sb.from('documents').select('*').eq('household_id', hid).order('created_at', { ascending: false }),
         sb.from('lease_history').select('*').eq('household_id', hid).order('lease_end', { ascending: false }),
         sb.from('inspections').select('*').eq('household_id', hid).order('done_on', { ascending: false }),
-        sb.from('repair_requests').select('*').eq('household_id', hid).order('created_at', { ascending: false }).limit(100)
+        sb.from('repair_requests').select('*').eq('household_id', hid).order('created_at', { ascending: false }).limit(100),
+        sb.from('rent_notices').select('*').eq('household_id', hid).eq('status', 'pending').order('created_at', { ascending: false })
       ]);
       res.forEach((r) => { if (r.error) throw r.error; });
-      const [u, b, p, r, rp, t, l, im, ap, co, dc, lh, ins, rq] = res.map((x) => x.data);
+      const [u, b, p, r, rp, t, l, im, ap, co, dc, lh, ins, rq, nt] = res.map((x) => x.data);
+      S.notices = nt || [];
       S.household = m.households; delete m.households; S.member = m;
       S.units = u; S.bills = b; S.rentals = r; S.tasks = t; S.logs = l; S.imports = im; S.appliances = ap; S.contractors = co; S.documents = dc; S.leases = lh; S.inspections = ins; S.requests = rq;
       S.payments = {}; p.forEach((x) => { S.payments[payKey(x.bill_id, x.period)] = x; });
@@ -406,7 +408,7 @@
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {
       const m = j.error || '';
-      throw new Error(r.status === 429 || j.busy ? 'The AI is busy right now. Try again in a minute.' : r.status === 401 ? 'Your sign-in expired. Close and reopen the app.' : (!m || /Groq|unavailable right now|Unknown mode/.test(m)) ? 'The AI couldn’t answer just now. Try again.' : m);
+      throw new Error(j.limit ? j.error : r.status === 429 || j.busy ? 'The AI is busy right now. Try again in a minute.' : r.status === 401 ? 'Your sign-in expired. Close and reopen the app.' : (!m || /Groq|unavailable right now|Unknown mode/.test(m)) ? 'The AI couldn’t answer just now. Try again.' : m);
     }
     return j;
   }
@@ -849,22 +851,55 @@
   function isDemo() { return !!(S.user && CFG.DEMO_EMAIL && S.user.email === CFG.DEMO_EMAIL); }
   function authView() {
     const up = S.authMode === 'signup';
-    return `<div class="auth"><div class="card ds-auth">
-      <img class="logo" src="icons/icon-192.png" alt="">
-      <div><h1 class="display" style="margin:0;font-size:30px">Doorstep</h1>
-      <p class="muted" style="margin:4px 0 0">Rent, bills and repairs for small landlords. Free.</p></div>
-      <button type="button" class="btn primary block" data-act="demo-login" ${S.busy ? 'disabled' : ''}>👀 Try the demo</button>
-      <p class="small muted" style="margin:-6px 0 0;text-align:center">A sample duplex with two tenants and a year of bills. It resets every night.</p>
-      <div class="or" aria-hidden="true"><span>or</span></div>
-      <form class="stack" data-form="auth" novalidate>
-        <div class="seg theme-seg" role="group" aria-label="Sign in or create an account">${[['signin', 'Sign in'], ['signup', 'Create account']].map(([v, l]) => `<button type="button" data-act="auth-mode" data-v="${v}" aria-pressed="${(S.authMode || 'signin') === v}">${l}</button>`).join('')}</div>
-        <div class="field"><label for="a-email">Email</label><input class="input" id="a-email" name="email" type="email" autocomplete="username" autocapitalize="off" spellcheck="false" required></div>
-        <div class="field"><label for="a-pass">Password ${up ? '<span class="muted">(8+ characters)</span>' : ''}</label><input class="input" id="a-pass" name="password" type="password" minlength="8" autocomplete="${up ? 'new-password' : 'current-password'}" autocapitalize="off" spellcheck="false" required></div>
-        ${S.authErr ? `<p class="err" role="alert">${esc(S.authErr)}</p>` : ''}
-        <button class="btn block" type="submit" ${S.busy ? 'disabled' : ''}>${up ? 'Create my account' : 'Sign in'}</button>
-      </form>
-      <p class="small muted" style="margin:0">Tenants: open the link your landlord sends you. No account needed.</p>
-    </div></div>`;
+    const feat = [
+      ['🔑', 'Rent, unit by unit', 'See who paid and who’s late. Zelle alerts and tenants’ “I’ve paid” notes mark rent for you.'],
+      ['🧾', 'Bills on time', 'Every utility, mortgage and tax bill with reminders, a calendar and a year of history.'],
+      ['🔧', 'Repairs from tenants', 'Tenants report problems with photos. You schedule, reply and keep the history.'],
+      ['📊', 'Taxes made easy', 'Income and expenses sorted Schedule E style, ready for your accountant.'],
+      ['✦', 'Ask in plain words', '“What did heat cost last winter?” or “paid electric $96”. The helper does the rest.'],
+      ['👤', 'Personal on the side', 'Netflix, phone, gym… tracked separately from the rental.']
+    ];
+    return `<div class="lp">
+      <header class="lp-nav"><span class="lp-brand"><img src="icons/icon-192.png" alt="" width="34" height="34"> Doorstep</span><button type="button" class="btn sm" data-act="auth-mode" data-v="signin" data-jump="1">Sign in</button></header>
+      <section class="lp-hero">
+        <div class="lp-copy">
+          <span class="lp-eyebrow">Free for small landlords</span>
+          <h1 class="display">Rent, bills and repairs. Right at your doorstep.</h1>
+          <p class="lp-lead">One simple app for landlords with a few units: track rent, never miss a bill, and let tenants report repairs. No bank login needed.</p>
+          <div class="lp-cta"><button type="button" class="btn primary" data-act="demo-login" ${S.busy ? 'disabled' : ''}>👀 Try the demo</button><button type="button" class="btn" data-act="auth-mode" data-v="signup" data-jump="1">Create free account</button></div>
+          <p class="small muted">The demo is a sample duplex with two tenants and a year of history. It resets every night.</p>
+        </div>
+        <div class="lp-art" aria-hidden="true">
+          <div class="lp-card c1"><span class="small muted">Rent · November</span><strong class="display">$3,100</strong><span class="pill paid" style="margin:0">All in ✓</span></div>
+          <div class="lp-card c2"><span class="small muted">Next bill</span><strong>Valley Electric</strong><span class="small">Due Friday · $93.27</span></div>
+          <div class="lp-card c3"><span class="small muted">Repair · Upstairs</span><strong>Kitchen faucet</strong><span class="pill up" style="margin:0">Scheduled Thu</span></div>
+        </div>
+      </section>
+      <section class="lp-sec"><h2 class="display">Everything a small landlord tracks</h2>
+        <div class="lp-grid">${feat.map(([i, t, d]) => `<div class="lp-feat"><span class="lp-ic">${i}</span><strong>${t}</strong><span class="small muted">${d}</span></div>`).join('')}</div></section>
+      <section class="lp-sec"><h2 class="display">Up and running in minutes</h2>
+        <ol class="lp-steps"><li><strong>Create your account</strong><span class="small muted">Email and password. Free.</span></li><li><strong>Add your property</strong><span class="small muted">Units, tenants and the bills you pay.</span></li><li><strong>Share tenant links</strong><span class="small muted">Each tenant gets a private page. No app or account for them.</span></li></ol></section>
+      <section class="lp-sec lp-tenant"><h2 class="display">Tenants love it too</h2>
+        <p>Their private link shows what’s due and how to pay, lets them say “I’ve paid”, and report repairs with a photo. Nothing to install.</p></section>
+      <section class="lp-sec"><h2 class="display">Questions</h2>
+        <details class="lp-q"><summary>Is it really free?</summary><p class="small">Yes. No ads, no credit card.</p></details>
+        <details class="lp-q"><summary>Who can see my data?</summary><p class="small">Only people you invite to your property. Tenants see only their own rent and requests. You can download or delete everything any time.</p></details>
+        <details class="lp-q"><summary>Do I have to connect my bank?</summary><p class="small">No. You can record payments yourself, or forward bill and Zelle emails from Gmail.</p></details>
+        <details class="lp-q"><summary>Can my partner or co-owner use it?</summary><p class="small">Yes. They create their own account and join with your house code.</p></details></section>
+      <section class="lp-sec" id="signin"><div class="card ds-auth" style="margin:0 auto">
+        <h2 class="display" style="margin:0">${up ? 'Create your free account' : 'Sign in'}</h2>
+        <form class="stack" data-form="auth" novalidate>
+          <div class="seg theme-seg" role="group" aria-label="Sign in or create an account">${[['signin', 'Sign in'], ['signup', 'Create account']].map(([v, l]) => `<button type="button" data-act="auth-mode" data-v="${v}" aria-pressed="${(S.authMode || 'signin') === v}">${l}</button>`).join('')}</div>
+          <div class="field"><label for="a-email">Email</label><input class="input" id="a-email" name="email" type="email" autocomplete="username" autocapitalize="off" spellcheck="false" required></div>
+          <div class="field"><label for="a-pass">Password ${up ? '<span class="muted">(8+ characters)</span>' : ''}</label><input class="input" id="a-pass" name="password" type="password" minlength="8" autocomplete="${up ? 'new-password' : 'current-password'}" autocapitalize="off" spellcheck="false" required></div>
+          ${S.authErr ? `<p class="err" role="alert">${esc(S.authErr)}</p>` : ''}
+          <button class="btn primary block" type="submit" ${S.busy ? 'disabled' : ''}>${up ? 'Create my account' : 'Sign in'}</button>
+          ${up ? '<p class="small muted" style="margin:0">By creating an account you agree to the <a href="terms.html">Terms</a> and <a href="privacy.html">Privacy policy</a>.</p>' : ''}
+        </form>
+        <button type="button" class="btn block" data-act="demo-login" ${S.busy ? 'disabled' : ''}>👀 Or try the demo</button>
+      </div></section>
+      <footer class="lp-foot"><span>© ${new Date().getFullYear()} Doorstep</span><span><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a></span></footer>
+    </div>`;
   }
   function recoveryView() {
     return `<div class="auth"><form class="card" data-form="recovery">
@@ -1465,6 +1500,7 @@
       ${needs ? `<p class="notice">Add each tenant’s rent amount so the app can track it. Tap <strong>Details</strong> on the card.</p>` : ''}
       ${soon.map((r) => { const d = dayDiff(fromIso(r.lease_end)); return `<p class="notice info">${esc(rentalTitle(r))}’s lease ${d < 0 ? 'ended' : 'ends'} ${fmtDate(fromIso(r.lease_end))}${d >= 0 ? ' (' + d + ' days)' : ''}. <button class="linkbtn" data-act="renew" data-id="${r.id}" style="min-height:0;padding:0">Renew</button> or <button class="linkbtn" data-act="moveout" data-id="${r.id}" style="min-height:0;padding:0">plan move-out</button></p>`; }).join('')}
       ${depDue.map((r) => { const by = new Date(fromIso(r.move_out_on).getTime() + 14 * 86400000); const d = dayDiff(by); return `<p class="notice${d <= 3 ? '' : ' info'}">Return ${esc(rentalTitle(r))}’s deposit${r.deposit ? ' (' + money(r.deposit) + ')' : ''} with an itemized list by <strong>${fmtDate(by)}</strong>${d >= 0 ? ' (' + d + ' days)' : ' (overdue)'}. <button class="linkbtn" data-act="moveout" data-id="${r.id}" style="min-height:0;padding:0">Record it</button></p>`; }).join('')}
+      ${noticesCard()}
       ${unmatchedCard()}
       ${vacantCards()}
       ${md.rows.length ? `<ul class="bills">${md.rows.map(rentCard).join('')}</ul>` : emptyState('people', 'No tenants yet', 'Add each floor’s tenant to track rent.', '<button class="btn primary-soft" data-act="new-rental">Add a tenant</button>')}
@@ -1577,6 +1613,19 @@
         <button class="btn" data-act="rental" data-id="${r.id}" style="flex:1">Details</button>
       </div>
     </li>`;
+  }
+  function noticesCard() {
+    const list = (S.notices || []).filter((n) => n.status === 'pending');
+    if (!list.length) return '';
+    return `<section class="card notices" aria-label="Tenants say they paid">
+      <h2>Tenants say they paid <span class="count">${list.length}</span></h2>
+      ${list.map((n) => { const r = S.rentals.find((x) => x.id === n.rental_id); return `<div class="notice-row">
+        <div class="stack" style="gap:2px;min-width:0"><strong>${esc(r ? rentalTitle(r) : 'Tenant')} · ${money(n.amount)}</strong>
+        <span class="small muted">${esc(n.method || '')}${n.method ? ' · ' : ''}${fmtDay(new Date(n.created_at))} · ${esc(monthLabel(n.period.slice(0, 7) + '-01', true))} rent${n.note ? ' · “' + esc(n.note) + '”' : ''}</span></div>
+        <div class="btns" style="flex:none"><button type="button" class="btn primary-soft" data-act="notice-ok" data-id="${n.id}">Confirm</button><button type="button" class="btn" data-act="notice-no" data-id="${n.id}">Not yet</button></div>
+      </div>`; }).join('')}
+      <p class="small muted" style="margin:0">Confirm once you see the money in your account. It’s then marked received for that month.</p>
+    </section>`;
   }
   function unmatchedCard() {
     const list = S.imports.filter((x) => x.kind === 'zelle' && x.status === 'unmatched' && x.amount != null);
@@ -2262,6 +2311,14 @@
         </form>`}
         ${S.household && S.household.claim_code ? `<p class="lab small" style="margin:6px 0 0">Invite a co-owner or family member</p><p class="small" style="margin:0">They create a free account, then enter this house code: <button type="button" class="acct" data-act="copy" data-text="${esc(S.household.claim_code)}"><strong class="num">${esc(S.household.claim_code)}</strong> ${ICON.copy}</button></p>` : ''}
       </section>
+      <section class="card" aria-label="Your data">
+        <h2>Your data</h2>
+        <p class="small muted" style="margin:0">Download everything for ${esc(S.household ? S.household.name : 'this property')} as a file you can keep or move elsewhere.</p>
+        <button type="button" class="btn block" data-act="export-data">Download my data</button>
+        ${isDemo() ? '' : `<button type="button" class="btn block danger" data-act="delete-account">${S.delArm ? 'Tap again to delete your account for good' : 'Delete my account'}</button>
+        <p class="small muted" style="margin:0">Deleting removes your login, and any property no one else shares with you, with its bills, rent, photos and files. It can’t be undone.</p>`}
+        <p class="small" style="margin:0"><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a></p>
+      </section>
       <section class="card" aria-label="This device">
         <h2>This device</h2>
         <button class="btn block" data-act="refresh">Refresh data</button>
@@ -2914,7 +2971,7 @@ function setup() {
         const r = await sb.auth.signInWithPassword({ email: CFG.DEMO_EMAIL, password: CFG.DEMO_PASSWORD });
         S.busy = false; if (r.error) S.authErr = 'The demo is being refreshed. Try again in a minute.'; render(); break;
       }
-      case 'auth-mode': S.authMode = el.dataset.v; S.authErr = ''; render(); break;
+      case 'auth-mode': S.authMode = el.dataset.v; S.authErr = ''; render(); if (el.dataset.jump) { const f = document.getElementById('signin'); if (f) f.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth' }); setTimeout(() => { const n = document.getElementById('a-email'); if (n) n.focus({ preventScroll: true }); }, 350); } break;
       case 'demo-signup': S.authMode = 'signup'; await sb.auth.signOut(); break;
       case 'houses-open': S.sheet = { type: 'houses' }; S.sheetErr = ''; FX.sheetEnter = true; render(); break;
       case 'house-switch': {
@@ -2922,6 +2979,53 @@ function setup() {
         try { localStorage.setItem('ds-house', id); } catch (_) {}
         S.sheet = null; S.month = monthKey(new Date()); S.unit = 'all'; S.tab = 'summary'; S.view = 'loading'; render();
         await loadAll(); toast('Switched to ' + (S.household ? S.household.name : 'property')); break;
+      }
+      case 'notice-ok': case 'notice-no': {
+        const n = (S.notices || []).find((x) => x.id === id); if (!n) break;
+        const ok = act === 'notice-ok';
+        if (ok) {
+          const r = S.rentals.find((x) => x.id === n.rental_id);
+          if (r) { const k = n.period.slice(0, 7) + '-01'; const rp = getRentPay(r, k); saveRentPay(r, k, { amount_due: rentDue(r, rp), amount_received: Math.round((Number((rp && rp.amount_received) || 0) + Number(n.amount)) * 100) / 100, received_at: n.created_at, method: n.method || (rp && rp.method) || null }); }
+        }
+        n.status = ok ? 'confirmed' : 'dismissed';
+        queue({ kind: 'update', table: 'rent_notices', row: { status: n.status }, match: { id: n.id } });
+        S.notices = S.notices.filter((x) => x.id !== n.id); saveCache(); render();
+        if (ok) { feedback(); toast('Rent marked received'); } else toast('Left as not received');
+        break;
+      }
+      case 'export-data': {
+        const pick = ['household', 'units', 'bills', 'payments', 'rentals', 'rentPays', 'tasks', 'logs', 'appliances', 'contractors', 'documents', 'leases', 'inspections', 'requests', 'notices'];
+        const out = { app: 'Doorstep', exported_at: new Date().toISOString(), user: S.user ? S.user.email : null };
+        pick.forEach((k) => { out[k] = S[k]; });
+        const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+        a.download = 'doorstep-' + String(S.household ? S.household.name : 'data').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + isoDate(today()) + '.json';
+        document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+        toast('Downloaded'); break;
+      }
+      case 'delete-account': {
+        if (isDemo()) break;
+        if (!S.delArm) { S.delArm = true; render(); setTimeout(() => { S.delArm = false; renderSoon(); }, 6000); break; }
+        S.delArm = false; toast('Deleting…');
+        try {
+          // remove the files of properties only you are in, then the account
+          for (const h of (S.houses || [])) {
+            const mem = await sb.from('household_members').select('user_id').eq('household_id', h.id);
+            if (mem.error || (mem.data || []).some((x) => x.user_id !== S.user.id)) continue;
+            const top = await sb.storage.from('receipts').list(h.id, { limit: 100 });
+            for (const f of (top.data || [])) {
+              const inner = await sb.storage.from('receipts').list(h.id + '/' + f.name, { limit: 1000 });
+              const paths = (inner.data || []).map((x) => h.id + '/' + f.name + '/' + x.name).concat(f.id ? [h.id + '/' + f.name] : []);
+              if (paths.length) await sb.storage.from('receipts').remove(paths);
+            }
+          }
+          const r = await sb.rpc('delete_my_account');
+          if (r.error) throw r.error;
+          try { Object.keys(localStorage).filter((k) => /^ds-/.test(k)).forEach((k) => localStorage.removeItem(k)); } catch (_) {}
+          await sb.auth.signOut();
+          S.user = null; S.household = null; S.view = 'auth'; render(); toast('Your account was deleted.');
+        } catch (e) { toast(friendlyErr(e, 'delete the account')); }
+        break;
       }
       case 'tour-next': if (S.tour < TOUR.length - 1) { S.tour++; render(); } else endTour(); break;
       case 'tour-skip': endTour(); break;

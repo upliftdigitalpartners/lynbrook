@@ -130,7 +130,13 @@ Deno.serve(async (req) => {
   if (!u?.user) return json({ error: 'Sign in first.' }, 401);
   const { count } = await db.from('household_members').select('user_id', { count: 'exact', head: true }).eq('user_id', u.user.id);
   if (!count) return json({ error: 'Not part of a household.' }, 403);
-  if (!GROQ_KEY) return json({ error: 'Add the GROQ_API_KEY secret in Supabase first.' }, 503);
+  if (!GROQ_KEY) return json({ error: 'The AI helper isn’t switched on for Doorstep yet.' }, 503);
+  {
+    // Doorstep: daily AI allowance per person; the shared demo gets a smaller one
+    const lim = u.user.email === 'demo@doorstep.example' ? 25 : 80;
+    const { data: allowed } = await db.rpc('bump_ai', { p_user: u.user.id, p_limit: lim });
+    if (allowed === false) return json({ error: 'You’ve used today’s AI allowance (' + lim + '). It resets tomorrow.', limit: true }, 429);
+  }
 
   const body = await req.json().catch(() => ({}));
   const today = String(body.today ?? new Date().toISOString().slice(0, 10)).slice(0, 10);

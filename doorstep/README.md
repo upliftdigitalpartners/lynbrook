@@ -46,6 +46,17 @@ npx supabase functions deploy assist scan-bill tenant weather --project-ref aprl
 - **Setup guide** (Settings): home screen, reminders, bills, pay info, tenants, mortgage, Zelle alerts, Gmail import, upkeep. It's hidden in the demo.
 - **Several properties:** tap the address at the top to switch, or to add another (up to 5).
 
+## Landing, tenants, privacy, limits
+
+- **Landing page** for signed-out visitors: what Doorstep does, how it works, the tenant side, FAQ, Try the demo, and sign in / create account.
+- **"I've paid" from tenants:** the tenant page lets them say they paid (amount, method, note). The landlord gets a push alert and a **Tenants say they paid** card on the Rent tab, where **Confirm** marks it received (`rent_notices`, migration 013).
+- **Privacy policy and Terms:** `privacy.html` and `terms.html`, linked from the landing page, the sign-up form and Settings.
+- **Your data** (Settings): **Download my data** (JSON) and **Delete my account**. Deleting removes your login and any property only you are in, with its files (`delete_my_account()`). Neither is offered in the demo.
+- **Daily AI allowance:** 80 a day per person, and 25 a day shared by everyone in the demo (`ai_usage` + `bump_ai()`), enforced in `assist` and `scan-bill`.
+
 ## Still needed
 
 - **AI features** (Ask, scan a bill, recap) need a `GROQ_API_KEY` secret on the Doorstep Supabase project: Project Settings › Edge Functions › Secrets. Use a separate Groq key from Evergreen's, so demo visitors can't use up Evergreen's limits.
+- **Texting or emailing tenants automatically** needs a paid SMS or email service (for example Twilio or Resend).
+- **A custom domain** and **online rent payments** (Stripe) need accounts in your name.
+- Add a **contact email** to the Privacy and Terms pages, and have someone qualified review them before a public launch.
