@@ -74,6 +74,31 @@
   function rentalTitle(r) { return r.tenant_name || unitName(r.unit_id) + ' tenant'; }
   function isNetErr(e) { return !navigator.onLine || /fetch|network|load failed|timeout/i.test((e && (e.message || e.toString())) || ''); }
 
+  // Plain-language error text with one next step
+  let audioCtx = null;
+  function soundOn() { try { return localStorage.getItem('eh-sound') === '1'; } catch (_) { return false; } }
+  function feedback(force) {
+    if (navigator.vibrate) navigator.vibrate(12);
+    if (!soundOn() && !force) return;
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      const t0 = audioCtx.currentTime;
+      [[880, 0], [1320, 0.07]].forEach(([f, d]) => {
+        const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+        o.type = 'sine'; o.frequency.value = f; g.gain.setValueAtTime(0.0001, t0 + d); g.gain.exponentialRampToValueAtTime(0.09, t0 + d + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.12);
+        o.connect(g); g.connect(audioCtx.destination); o.start(t0 + d); o.stop(t0 + d + 0.14);
+      });
+    } catch (_) {}
+  }
+  function friendlyErr(e, what) {
+    const m = String((e && e.message) || e || '');
+    if (!navigator.onLine) return 'You’re offline. Try again when you’re connected.';
+    if (/busy|free plan|429/i.test(m)) return 'The AI is busy right now. Try again in a minute.';
+    if (/jwt|token|session|sign.?in|401/i.test(m)) return 'Your sign-in expired. Close and reopen the app.';
+    if (/fetch|network|load failed|timeout|abort/i.test(m)) return 'Couldn’t reach the server. Check your connection and try again.';
+    if (/too large|20 MB|JPEG|PNG/i.test(m)) return m;
+    return (what ? 'Couldn’t ' + what + '. ' : 'Something went wrong. ') + 'Try again.';
+  }
   let toastTimer;
   let toastUndo = null;
   function toast(msg, undo) {
@@ -189,7 +214,7 @@
       checkPush();
     } catch (e) {
       if (!cached) { S.view = 'app'; render(); }
-      toast(isNetErr(e) ? 'Offline — showing saved copy' : 'Couldn’t load: ' + e.message);
+      toast(isNetErr(e) ? 'Offline — showing your saved copy' : 'Couldn’t load your house. Pull down to try again.');
     }
   }
 
@@ -354,11 +379,16 @@
     return null;
   }
   async function assist(body) {
-    if (!navigator.onLine) throw new Error('Connect to the internet first.');
+    if (!navigator.onLine) throw new Error('You’re offline. Try again when you’re connected.');
     const { data } = await sb.auth.getSession();
-    const r = await fetch(CFG.SUPABASE_URL + '/functions/v1/assist', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session.access_token, apikey: CFG.SUPABASE_ANON_KEY }, body: JSON.stringify(Object.assign({ today: isoDate(today()) }, body)) });
+    if (!data || !data.session) throw new Error('Your sign-in expired. Close and reopen the app.');
+    const r = await fetch(CFG.SUPABASE_URL + '/functions/v1/assist', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session.access_token, apikey: CFG.SUPABASE_ANON_KEY }, body: JSON.stringify(Object.assign({ today: isoDate(today()) }, body)) })
+      .catch((e) => { throw new Error(friendlyErr(e)); });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || 'The assistant is unavailable.');
+    if (!r.ok) {
+      const m = j.error || '';
+      throw new Error(r.status === 429 || j.busy ? 'The AI is busy right now. Try again in a minute.' : r.status === 401 ? 'Your sign-in expired. Close and reopen the app.' : (!m || /Groq|unavailable right now|Unknown mode/.test(m)) ? 'The AI couldn’t answer just now. Try again.' : m);
+    }
     return j;
   }
 
@@ -534,7 +564,7 @@
       const r = await fetch(CFG.SUPABASE_URL + '/functions/v1/scan-bill', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session.access_token, apikey: CFG.SUPABASE_ANON_KEY }, body: JSON.stringify({ image, type: 'image/jpeg' }) });
       x = await r.json();
       if (!r.ok) return toast(x.error || 'Couldn’t read the bill.');
-    } catch (_) { return toast('Couldn’t reach the bill reader.'); }
+    } catch (e) { return toast(friendlyErr(e, 'read the bill')); }
     if (x.amount_due == null && !x.due_date && !x.account_number) return toast('Couldn’t read that bill. Try a flatter, brighter photo.');
     const b = matchScanned(x);
     S.scan = Object.assign({ file }, x, { billId: b ? b.id : null });
@@ -830,6 +860,7 @@
   }
 
   function appView() {
+    if (S.tour === undefined) S.tour = tourSeen() || !S.household ? null : 0;
     const titles = { bills: 'Bills', rent: 'Rent', upkeep: 'House', summary: 'Summary', settings: 'Settings' };
     const houseAdd = { upcoming: ['new-task', 'Add upkeep task'], history: ['new-log', 'Log a repair'], appliances: ['new-appliance', 'Add appliance'], pros: ['new-contractor', 'Add contractor'], docs: ['new-doc', 'Add document'] };
     const adds = { bills: ['new-bill', 'Add bill'], rent: ['new-rental', 'Add tenant'], upkeep: houseAdd[S.upkeepView] };
@@ -850,6 +881,7 @@
       ${S.sheet ? sheetView() : ''}
       ${S.tab !== 'settings' && !S.sheet ? '<button class="fab" data-act="ask-open" aria-label="Ask or add: type, speak or scan a bill"><span aria-hidden="true">✦</span> Ask or add</button>' : ''}
       ${S.story ? storyView() : ''}
+      ${S.tour != null ? tourView() : ''}
     </div>`;
   }
 
@@ -857,9 +889,9 @@
     const isCur = S.month === monthKey(new Date());
     return `<div class="row between">
       <div class="monthnav" data-swipe-month="1">
-        <button class="iconbtn" data-act="month" data-delta="-1" aria-label="Previous month">${ICON.left}</button>
+        <button class="iconbtn" data-act="month" data-delta="-1" aria-label="Previous month" title="Previous month">${ICON.left}</button>
         <strong style="font-size:16px;min-width:140px;text-align:center">${monthLabel(S.month)}</strong>
-        <button class="iconbtn" data-act="month" data-delta="1" aria-label="Next month">${ICON.right}</button>
+        <button class="iconbtn" data-act="month" data-delta="1" aria-label="Next month" title="Next month">${ICON.right}</button>
       </div>
       ${isCur ? '' : '<button class="btn" data-act="month-today">This month</button>'}
     </div>`;
@@ -1013,7 +1045,7 @@
     const justPaid = paid && FX.stamp === b.id && Date.now() < FX.stampUntil;
     return `<li class="bill swipe ${paid ? 'paid' : ''}${S.nudgeId === b.id && !paid ? ' nudge' : ''}" id="bill-${b.id}" data-swipe-right="toggle" data-swipe-left="bill" data-id="${b.id}" data-paid="${paid}">${paid ? `<span class="paidstamp${justPaid ? ' slam' : ''}" aria-hidden="true">PAID</span>` : ''}
       <div class="bill-top">
-        <button class="check" data-act="toggle" data-id="${b.id}" aria-pressed="${paid}" aria-label="${paid ? 'Mark unpaid' : 'Mark paid'}: ${esc(billTitle(b))}, ${esc(unit)}">${ICON.check}</button>
+        <button class="check labeled" data-act="toggle" data-id="${b.id}" aria-pressed="${paid}" aria-label="${paid ? 'Mark unpaid' : 'Mark paid'}: ${esc(billTitle(b))}, ${esc(unit)}">${ICON.check}<span class="ilab" aria-hidden="true">${paid ? 'Paid' : 'Pay'}</span></button>
         <div class="bill-info">
           <div class="row wrap" style="gap:6px"><span class="bill-name">${esc(billTitle(b))}</span><span class="tag">${esc(unit)}</span></div>
           ${b.account_number ? `<button class="acct" data-act="copy" data-text="${esc(b.account_number)}" aria-label="Copy account number ${esc(b.account_number)}">${esc(b.category)} · #<span class="num">${esc(b.account_number)}</span> ${ICON.copy}</button>` : `<span class="small muted">${esc(b.category)}</span>`}
@@ -1100,6 +1132,32 @@
       ${tile('all', '🧾', 'Total bills', t.Gas + t.Electric + t.Water, 'Gas + electric + water' + (t.Water ? ' (' + money0(t.Water) + ')' : '') + (miss ? ' · ' + miss + ' not in yet' : ''))}
     </section>`;
   }
+  const TOUR = [
+    { icon: '🧾', title: 'Bills come to you', body: 'Emailed bills show up here by themselves. When you pay one, swipe it right or tap its ✓ box.' },
+    { icon: '🏠', title: 'Rent, floor by floor', body: 'Tap “✓ Got” when rent arrives, or let Zelle alerts mark it for you. “Text” sends a polite reminder.' },
+    { icon: '✦', title: 'Ask or add, any time', body: 'The green button answers questions, records “paid PSEG $96”, and scans paper bills.' }
+  ];
+  function tourSeen() { try { return !!localStorage.getItem('eh-tour'); } catch (_) { return true; } }
+  function endTour() { try { localStorage.setItem('eh-tour', '1'); } catch (_) {} S.tour = null; render(); }
+  function tourView() {
+    const i = S.tour, c = TOUR[i];
+    const addr = S.household && S.household.address ? S.household.address.split(',')[0] : 'your house';
+    return `<div class="tour" role="dialog" aria-modal="true" aria-labelledby="tour-title">
+      <svg class="tour-house${i ? ' still' : ''}" viewBox="0 0 390 300" aria-hidden="true">
+        <circle class="t-sun" cx="300" cy="80" r="34"/><rect class="t-ground" x="20" y="262" width="350" height="6" rx="3"/>
+        <g class="t-wall"><rect x="105" y="150" width="180" height="112"/><rect x="105" y="205" width="180" height="3" class="t-line"/></g>
+        <rect class="t-chim" x="238" y="74" width="22" height="48"/><path class="t-roof" d="M85 152 195 74 305 152z"/>
+        <rect class="t-door" x="182" y="218" width="26" height="44" rx="3"/>
+        <rect class="t-win w1" x="125" y="166" width="32" height="28" rx="3"/><rect class="t-win w2" x="233" y="166" width="32" height="28" rx="3"/>
+        <rect class="t-win w3" x="125" y="220" width="32" height="28" rx="3"/><rect class="t-win w4" x="233" y="220" width="32" height="28" rx="3"/>
+        <path class="t-tree a" d="M48 262c0-34 12-56 19-66 7 10 19 32 19 66z"/><path class="t-tree b" d="M318 262c0-26 9-44 15-52 6 8 15 26 15 52z"/>
+      </svg>
+      <div class="tour-head${i ? ' still' : ''}"><span class="eyebrow">Welcome home</span><h2 id="tour-title" class="display">${esc(addr)}</h2><p>Bills, rent and upkeep, all in one calm place.</p></div>
+      <div class="tour-card" data-k="${i}"><span class="tour-icon" aria-hidden="true">${c.icon}</span><span class="stack" style="gap:3px"><strong>${esc(c.title)}</strong><span class="small">${esc(c.body)}</span></span></div>
+      <div class="tour-dots" aria-hidden="true">${TOUR.map((_, k) => `<i class="${k === i ? 'on' : ''}"></i>`).join('')}</div>
+      <div class="tour-btns"><button type="button" class="btn" data-act="tour-skip">Skip</button><button type="button" class="btn primary" data-act="tour-next">${i < TOUR.length - 1 ? 'Next' : 'Open my house'}</button></div>
+    </div>`;
+  }
   function heroCarousel(a, b) {
     if (!a) return b;
     const i = S.heroSlide || 0;
@@ -1143,9 +1201,9 @@
         card = `<div class="actcard${m.applied ? ' done' : ''}"><ul class="quick-list">${acts.map((x) => `<li class="${x.ok ? '' : 'bad'}">${x.text}</li>`).join('')}</ul>
           ${m.applied ? `<span class="small actdone">${m.applied === 'no' ? 'Not saved' : 'Saved ✓'}</span>` : `<div class="btns">${ok ? `<button type="button" class="btn primary-soft" data-act="ask-apply" data-i="${i}" style="flex:1">Save ${ok === 1 ? 'it' : 'all ' + ok}</button>` : ''}<button type="button" class="btn" data-act="ask-skip" data-i="${i}" style="flex:1">${ok ? 'Cancel' : 'OK'}</button></div>`}</div>`;
       }
-      return `<div class="msg assistant">${fmtAnswer(m.content)}</div>${card}`;
+      return `<div class="msg assistant${m.retry ? ' errmsg' : ''}">${fmtAnswer(m.content)}${m.retry && i === log.length - 1 && !S.askBusy ? `<button type="button" class="linkbtn retry" data-act="ask-retry" data-i="${i}">↻ Try again</button>` : ''}</div>${card}`;
     };
-    const mic = ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) ? `<button type="button" class="iconbtn micbtn${S.listening ? ' on' : ''}" data-act="mic" data-target="ask-q" aria-label="${S.listening ? 'Stop listening' : 'Speak instead of typing'}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>` : '';
+    const mic = ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) ? `<button type="button" class="iconbtn micbtn${S.listening ? ' on' : ''}" data-act="mic" data-target="ask-q" aria-label="${S.listening ? 'Stop listening' : 'Speak instead of typing'}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span class="ilab" aria-hidden="true">${S.listening ? 'Stop' : 'Speak'}</span></button>` : '';
     return `<div class="sheet-bg" data-act="sheet-close-bg"><div class="sheet talk" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
       <div class="grabber" aria-hidden="true"></div>
       <div class="sheet-head talk-head"><span class="row" style="gap:12px;min-width:0">${HOUSE_AVATAR}<span class="stack" style="gap:0;min-width:0"><h2 id="sheet-title" class="display">${esc(addr)}</h2><span class="small talk-sub"><i class="live" aria-hidden="true"></i>Knows your bills, rent and upkeep</span></span></span><button class="iconbtn" data-act="sheet-close" aria-label="Close">${ICON.close}</button></div>
@@ -1158,7 +1216,7 @@
       <form class="row talk-form" data-form="ask">
         <label for="ask-q" class="sr">Ask or tell your house</label>
         <input class="input" id="ask-q" name="q" placeholder="Paid PSEG $96 · or ask anything" autocomplete="off" enterkeyhint="send" style="flex:1;min-width:0">
-        ${mic}<label class="iconbtn cambtn" aria-label="Scan a paper bill" title="Scan a paper bill"><input type="file" accept="image/*" capture="environment" class="sr" data-change="scan-bill">${ICON.camera}</label><button class="btn primary-soft" type="submit" ${S.askBusy ? 'disabled' : ''}>Send</button>
+        ${mic}<label class="iconbtn cambtn" aria-label="Scan a paper bill" title="Scan a paper bill"><input type="file" accept="image/*" capture="environment" class="sr" data-change="scan-bill">${ICON.camera}<span class="ilab" aria-hidden="true">Scan</span></label><button class="btn primary-soft" type="submit" ${S.askBusy ? 'disabled' : ''}>Send</button>
       </form>
       <p class="small muted">AI can make mistakes. You approve every change. Account numbers, phones and emails aren’t sent.</p>
     </div></div>`;
@@ -1182,7 +1240,7 @@
         const j = await assist({ mode: 'ask', question: q, history, context: askContext() });
         S.askLog = S.askLog.concat({ role: 'assistant', content: j.answer || 'No answer.' });
       }
-    } catch (e) { S.askLog = S.askLog.concat({ role: 'assistant', content: 'Sorry, ' + e.message }); }
+    } catch (e) { S.askLog = S.askLog.concat({ role: 'assistant', content: e.message || friendlyErr(e), retry: q }); }
     S.askBusy = false; render(); scrollChat();
   }
 
@@ -1416,6 +1474,21 @@
     const prev = Object.values(S.rentPays).filter((p) => p.rental_id === r.id && p.method && Number(p.amount_received) > 0).sort((a, b) => b.period.localeCompare(a.period))[0];
     return prev ? prev.method : 'Zelle';
   }
+  function payStrip(r) {
+    const cur = monthKey(new Date()); const cells = []; let recs = 0, onTime = 0, counted = 0;
+    for (let i = 11; i >= 0; i--) {
+      const k = addMonths(cur, -i); const rp = getRentPay(r, k); const due = rentDue(r, rp);
+      const before = r.lease_start && k < r.lease_start.slice(0, 7) + '-01';
+      const got = rp ? Number(rp.amount_received || 0) : 0;
+      let st = 'none', label = 'no record';
+      if (before) { st = 'before'; label = 'before the lease'; }
+      else if (rp && got > 0) { recs++; counted++; if (due != null && got < due) { st = 'partial'; label = 'partly paid'; } else if (rentOnTime(r, k)) { st = 'ok'; label = 'on time'; onTime++; } else { st = 'late'; label = 'paid late'; } }
+      else if (k === cur && due != null) { const d = dueOn(r.due_day, k); const lateNow = d && dayDiff(d) < -(r.grace_days || 0); st = lateNow ? 'miss' : 'wait'; label = lateNow ? 'late, not paid' : 'not due yet'; if (lateNow) counted++; }
+      cells.push(`<i class="ps ${st}" title="${monthLabel(k, true)}: ${label}"></i>`);
+    }
+    if (recs < 2) return '';
+    return `<div class="paystrip" role="img" aria-label="Last 12 months: ${onTime} of ${counted} on time"><div class="ps-row">${cells.join('')}</div><span class="small muted">${onTime} of ${counted} on time · last 12 months</span></div>`;
+  }
   function rentCard(x) {
     const r = x.r, done = x.st.k === 'paid';
     const unit = unitName(r.unit_id);
@@ -1434,6 +1507,7 @@
           <span class="small muted">${x.due != null ? 'Rent ' + money(x.due) + ' · due the ' + ordinal(r.due_day) : 'Rent amount not set'}${r.late_fee ? ' · late fee ' + money(r.late_fee) : ''}</span>
           <span class="pill ${x.st.k}">${esc(x.st.label)}</span>
           ${(() => { const n = rentStreak(r); return n >= 2 ? `<span class="streak">${streakDots(n)} On time ${n} months in a row</span>` : ''; })()}
+          ${payStrip(r)}
           ${x.rp && x.rp.source === 'email' ? '<span class="small muted">Recorded from Zelle email</span>' : ''}
         </div>
       </div>
@@ -1620,7 +1694,7 @@
     const path = S.household.id + '/' + folder + '/' + Date.now() + '-' + uuid().slice(0, 8) + '.' + ext;
     toast('Uploading…');
     const r = await sb.storage.from('receipts').upload(path, file, { contentType: file.type || undefined, upsert: false });
-    if (r.error) { toast('Upload failed: ' + r.error.message); return null; }
+    if (r.error) { toast(friendlyErr(r.error, 'upload that file')); return null; }
     return path;
   }
   const WHEEL_COL = { 'Heating & cooling': '#2B4C9B', 'Safety': '#A3400B', 'Exterior': '#1F6F5C', 'Yard': '#1F6F5C', 'Plumbing': '#8A6A12', 'Appliances': '#8A6A12', 'Electrical': '#6B3FA0', 'Cleaning': '#4D5853', 'Pest control': '#4D5853', 'Other': '#4D5853' };
@@ -1772,7 +1846,7 @@
       <p class="small muted">Your home’s bills are kept out of the rental totals above and out of the tax report.</p>
     </section>`;
   }
-  function summaryTab() { return foldSections(summaryTabRaw(), { 'Money in and out, last 6 months': true, 'Bills by place': false, 'Cash-flow forecast': true }); }
+  function summaryTab() { return foldSections(summaryTabRaw(), { 'Money in and out, last 6 months': true, 'Bills by place': false, 'Cash-flow forecast': false }); }
   function summaryHeadline(k) {
     const isCur = k === monthKey(new Date()), isPast = k < monthKey(new Date());
     const rm = rentMonth(k);
@@ -1981,6 +2055,8 @@
         <p class="lab small" style="margin:6px 0 0">Text size</p>
         <div class="seg theme-seg" role="group" aria-label="Text size">${[['1', 'Normal', 15], ['1.12', 'Large', 17], ['1.25', 'Larger', 19]].map(([v, l, px]) => `<button data-act="textsize" data-v="${v}" aria-pressed="${getTextSize() === v}" style="font-size:${px}px">${l}</button>`).join('')}</div>
         <p class="small muted">Makes everything in the app bigger on this device.</p>
+        <label class="checkrow"><input type="checkbox" data-change="sound" ${soundOn() ? 'checked' : ''}> Play a soft “tick” when I mark something paid or done</label>
+        <button type="button" class="linkbtn" data-act="tour-again" style="align-self:flex-start;padding:0">Show the welcome tour again</button>
       </section>
       <section class="card" aria-label="Reminders">
         <h2>Reminders</h2>
@@ -2027,7 +2103,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.10</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.11</p>`;
   }
 
   function importCard() {
@@ -2586,7 +2662,7 @@ function setup() {
           FX.stamp = b.id; FX.stampUntil = Date.now() + 900;
           const all = billMonth(S.month, true).rows.filter((x) => !x.b.escrow);
           if (all.length && all.every((x) => x.pay && x.pay.paid_at)) { toast('All ' + monthLabel(S.month).split(' ')[0] + ' bills paid!', undo); setTimeout(confetti, 350); } else toast(billTitle(b) + ' marked paid', undo);
-          if (navigator.vibrate) navigator.vibrate(12);
+          feedback();
         }
         render(); break;
       }
@@ -2602,7 +2678,7 @@ function setup() {
           FX.stamp = r.id; FX.stampUntil = Date.now() + 900;
           const rm = rentMonth(S.month);
           if (rm.rows.length && rm.rows.every((x) => x.st.k === 'paid')) { toast('All rent in for ' + monthLabel(S.month).split(' ')[0] + '!', undo); setTimeout(confetti, 350); } else toast('Got ' + money(due) + ' from ' + rentalTitle(r), undo);
-          if (navigator.vibrate) navigator.vibrate(12);
+          feedback();
         }
         render(); break;
       }
@@ -2649,7 +2725,11 @@ function setup() {
       case 'recap': makeRecap(); break;
       case 'ask-open': S.sheet = { type: 'ask' }; FX.sheetEnter = true; render(); setTimeout(() => { const n = document.getElementById('ask-q'); if (n) n.focus(); }, 300); break;
       case 'ask-suggest': askQuestion(el.dataset.q); break;
-      case 'ask-apply': { const m = (S.askLog || [])[+el.dataset.i]; if (!m || m.applied) break; const acts = m.actions.filter((a) => describeAction(a).ok); acts.forEach(applyAction); m.applied = 'yes'; render(); toast(acts.length === 1 ? 'Saved' : 'Saved ' + acts.length + ' items'); break; }
+      case 'ask-apply': { const m = (S.askLog || [])[+el.dataset.i]; if (!m || m.applied) break; const acts = m.actions.filter((a) => describeAction(a).ok); acts.forEach(applyAction); m.applied = 'yes'; render(); feedback(); toast(acts.length === 1 ? 'Saved' : 'Saved ' + acts.length + ' items'); break; }
+      case 'ask-retry': { const i = +el.dataset.i; const m = (S.askLog || [])[i]; if (!m || !m.retry) break; S.askLog = S.askLog.slice(0, i - 1); askQuestion(m.retry); break; }
+      case 'tour-next': if (S.tour < TOUR.length - 1) { S.tour++; render(); } else endTour(); break;
+      case 'tour-skip': endTour(); break;
+      case 'tour-again': S.tour = 0; window.scrollTo(0, 0); render(); break;
       case 'ask-skip': { const m = (S.askLog || [])[+el.dataset.i]; if (m) { m.applied = 'no'; render(); } break; }
       case 'bills-view': S.billsView = el.dataset.v; try { localStorage.setItem('eh-bview', S.billsView); } catch (_) {} render(); break;
       case 'cal-day': S.calDay = { k: S.month, d: +el.dataset.d }; render(); break;
@@ -2809,6 +2889,9 @@ function setup() {
       S.payoff = Object.assign({}, S.payoff, { [el.dataset.k]: isFinite(v) ? v : null }); render();
     } else if (kind === 'done-receipt') {
       doneReceipt(el);
+    } else if (kind === 'sound') {
+      try { localStorage.setItem('eh-sound', el.checked ? '1' : '0'); } catch (_) {}
+      if (el.checked) feedback(true); toast(el.checked ? 'Sound on' : 'Sound off');
     } else if (kind === 'scan-bill') {
       scanBill(el.files && el.files[0]); el.value = '';
     } else if (kind === 'turnover') {
@@ -2912,7 +2995,7 @@ function setup() {
       const nt = Object.assign({}, t, { last_done: on, vendor: val('vendor') || t.vendor });
       if (t.interval_months) nt.next_due = addMonthsIso(on, t.interval_months); else { nt.next_due = null; nt.active = false; }
       saveTask(nt);
-      S.sheet = null; render(); toast(t.interval_months ? 'Done — next one ' + fmtDate(fromIso(nt.next_due)) : 'Done', () => { deleteRow('logs', logId); saveTask(before); });
+      S.sheet = null; render(); feedback(); toast(t.interval_months ? 'Done — next one ' + fmtDate(fromIso(nt.next_due)) : 'Done', () => { deleteRow('logs', logId); saveTask(before); });
     } else if (kind === 'log') {
       const isNew = S.sheet.type === 'new-log';
       const l = isNew ? { id: uuid(), household_id: S.household.id, task_id: null, receipt_path: null, created_at: new Date().toISOString() } : S.logs.find((x) => x.id === S.sheet.id);
@@ -2967,7 +3050,7 @@ function setup() {
       const k = S.month; const rp = getRentPay(r, k); const due = rentDue(r, rp);
       const prevR = { amount_received: rp ? rp.amount_received : null, received_at: rp ? rp.received_at : null, method: rp ? rp.method || null : null };
       saveRentPay(r, k, { amount_due: due, amount_received: Math.round((Number((rp && rp.amount_received) || 0) + amt) * 100) / 100, received_at: new Date().toISOString(), method: (rp && rp.method) || lastRentMethod(r) });
-      S.partial = null; render(); toast('Got ' + money(amt) + ' from ' + rentalTitle(r), () => saveRentPay(r, k, prevR));
+      S.partial = null; render(); feedback(); toast('Got ' + money(amt) + ' from ' + rentalTitle(r), () => saveRentPay(r, k, prevR));
     } else if (kind === 'ask') {
       const q = val('q'); if (!q || S.askBusy) return;
       form.reset(); askQuestion(q);
@@ -3171,6 +3254,7 @@ function setup() {
   document.addEventListener('input', (e) => { if (e.target.dataset && e.target.dataset.input === 'docq') { S.docQuery = e.target.value; render(); } });
   document.addEventListener('submit', (e) => { e.preventDefault(); onSubmit(e.target); });
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && S.tour != null) { endTour(); return; }
     if (e.key === 'Escape' && S.story) { S.story = null; render(); return; }
     if (S.story && e.key === 'ArrowRight') { storyGo(S.story.i + 1); return; }
     if (S.story && e.key === 'ArrowLeft') { storyGo(S.story.i - 1); return; }
