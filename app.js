@@ -23,7 +23,7 @@
     authErr: '', joinErr: '',
     user: null, household: null, member: null, units: [], bills: [], payments: {},
     rentals: [], rentPays: {}, tasks: [], logs: [], imports: [], appliances: [], contractors: [], documents: [], docQuery: '', leases: [], inspections: [], requests: [], inspDraft: null,
-    tab: 'bills', month: monthKey(new Date()), unit: 'all', filter: 'all', upkeepView: 'upcoming',
+    tab: 'summary', month: monthKey(new Date()), unit: 'all', filter: 'all', upkeepView: 'upcoming',
     editing: null, sheet: null, sheetErr: '', deleteArm: false,
     online: navigator.onLine, pending: 0, pushState: 'unknown', installEvt: null, busy: false
   };
@@ -868,7 +868,7 @@
     const offline = !S.online || S.pending
       ? `<span class="status-dot">${!S.online ? 'Offline' : 'Syncing'}${S.pending ? ' · ' + S.pending + ' unsaved' : ''}</span>` : '';
     const body = { bills: billsTab, rent: rentTab, upkeep: upkeepTab, summary: summaryTab, settings: settingsTab }[S.tab]();
-    const tabs = [['bills', 'Bills'], ['rent', 'Rent'], ['upkeep', 'House'], ['summary', 'Summary'], ['settings', 'Settings']]
+    const tabs = [['summary', 'Summary'], ['bills', 'Bills'], ['rent', 'Rent'], ['upkeep', 'House'], ['settings', 'Settings']]
       .map(([id, l]) => `<button class="tab" data-act="tab" data-tab="${id}" ${S.tab === id ? 'aria-current="page"' : ''}>${ICON[id]}<span>${l}</span></button>`).join('');
     const add = adds[S.tab];
     return `<div class="shell">
@@ -3264,7 +3264,16 @@ function setup() {
   window.addEventListener('online', () => { S.online = true; flush().then(loadAll); });
   window.addEventListener('offline', () => { S.online = false; render(); });
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvt = e; renderSoon(); });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.view === 'app' && navigator.onLine && !S.sheet && !S.story) loadAll(); });
+  // Summary is home: coming back after 10+ minutes away (with nothing open) lands on Summary
+  let hiddenAt = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+    if (S.view === 'app' && hiddenAt && Date.now() - hiddenAt > 10 * 60 * 1000 && !S.sheet && !S.story && S.tour == null && S.tab !== 'summary') {
+      const busy = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+      if (!busy) { S.tab = 'summary'; S.month = monthKey(new Date()); window.scrollTo(0, 0); render(); }
+    }
+    if (document.visibilityState === 'visible' && S.view === 'app' && navigator.onLine && !S.sheet && !S.story) loadAll();
+  });
 
   // Swipe cards right (paid) / left (details); swipe the month header to change month
   let suppressClick = 0;
