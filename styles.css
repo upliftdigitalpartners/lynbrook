@@ -800,3 +800,15 @@ button.ut.on { box-shadow: 0 0 0 2px var(--accent); }
 .pchip { height: auto; min-height: 40px; padding: 8px 12px; }
 .gearbtn { width: 44px; height: 44px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
 .gearbtn[aria-current="page"] { background: var(--accent); color: var(--accent-ink, #fff); border-color: transparent; }
+
+/* Customize */
+.cz-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cz-list li { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 4px 6px 4px 10px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); }
+.cz-list li.off .cz-name { opacity: .5; }
+.cz-name { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; }
+.cz-input { height: 40px; padding: 0 10px; font-weight: 600; }
+.cz-arrows { display: flex; gap: 2px; }
+.iconbtn.sm { width: 40px; height: 40px; font-size: 18px; font-weight: 800; }
+.iconbtn.sm[disabled] { opacity: .25; }
+.cz-switch input { width: 22px; height: 22px; accent-color: var(--accent); margin: 0; }
+.btn.sm { min-height: 38px; padding: 0 12px; font-size: 14px; }
