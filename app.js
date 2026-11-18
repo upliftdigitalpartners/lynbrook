@@ -75,11 +75,15 @@
   function isNetErr(e) { return !navigator.onLine || /fetch|network|load failed|timeout/i.test((e && (e.message || e.toString())) || ''); }
 
   let toastTimer;
-  function toast(msg) {
+  let toastUndo = null;
+  function toast(msg, undo) {
     const t = document.getElementById('toast');
-    t.textContent = msg; t.classList.add('show');
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+    toastUndo = typeof undo === 'function' ? undo : null;
+    t.innerHTML = '<span>' + esc(msg) + '</span>' + (toastUndo ? '<button type="button" class="toast-undo" data-act="toast-undo">Undo</button>' : '');
+    t.classList.toggle('has-undo', !!toastUndo); t.classList.add('show');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.classList.remove('show'); toastUndo = null; }, toastUndo ? 5000 : 2600);
   }
+  function runUndo() { const f = toastUndo; toastUndo = null; clearTimeout(toastTimer); document.getElementById('toast').classList.remove('show'); if (f) { f(); render(); } }
 
   const sv = (d, w) => `<svg width="${w || 22}" height="${w || 22}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
   const ICON = {
@@ -742,6 +746,8 @@
       sh.addEventListener('animationend', () => sh.classList.remove('enter'), { once: true });
     }
     FX.sheetEnter = false;
+    const hc = document.querySelector('.herocar');
+    if (hc && S.heroSlide) { hc.style.scrollBehavior = 'auto'; hc.scrollLeft = hc.clientWidth * S.heroSlide; hc.style.scrollBehavior = ''; }
   }
   let rendering = false;
   function render() {
@@ -836,11 +842,12 @@
     return `<div class="shell">
       <header class="topbar">
         <div class="topbar-row"><span class="eyebrow">${esc(addr)}</span>${offline}</div>
-        <div class="topbar-row"><h1 class="display">${esc(titles[S.tab])}</h1><span class="topbar-actions">${S.tab !== 'settings' ? '<button class="askbtn" data-act="ask-open" aria-label="Talk to your house" title="Talk to your house">✦</button>' : ''}${add ? `<button class="addbtn" data-act="${add[0]}" aria-label="${add[1]}">${ICON.plus}<span>Add</span></button>` : ''}</span></div>
+        <div class="topbar-row"><h1 class="display">${esc(titles[S.tab])}</h1><span class="topbar-actions">${add ? `<button class="addbtn" data-act="${add[0]}" aria-label="${add[1]}">${ICON.plus}<span>Add</span></button>` : ''}</span></div>
       </header>
       <main class="main">${body}</main>
       <nav class="tabbar" aria-label="App sections"><div class="tabbar-inner">${tabs}</div></nav>
       ${S.sheet ? sheetView() : ''}
+      ${S.tab !== 'settings' && !S.sheet ? '<button class="fab" data-act="ask-open" aria-label="Ask or add: type, speak or scan a bill"><span aria-hidden="true">✦</span> Ask or add</button>' : ''}
       ${S.story ? storyView() : ''}
     </div>`;
   }
@@ -974,16 +981,12 @@
         + (later.length ? `<h2 class="section-h">Coming up <span class="count">${later.length}</span></h2>${list(later)}` : '')
         + (!attention.length && !later.length ? emptyState('done', 'All caught up', 'Every ' + monthLabel(S.month).split(' ')[0] + ' bill is paid. Enjoy the quiet.') : '')
         + (paid.length ? `<details class="paidfold" data-fold="b-paid" ${isOpen('b-paid', false) ? 'open' : ''}><summary><span>Paid <span class="count">${paid.length}</span></span><span class="num muted">${money(paidSum)}</span><span class="chev" aria-hidden="true"></span></summary><ul class="prows">${paid.map(paidRow).join('')}</ul></details>` : '');
-    if (S.billsView === 'cal') return `${weatherBanner()}${setupBanner()}${storyBar()}${monthNav()}
-      ${utilTotals(md)}
-      ${billsHero(md, pct)}
-      ${quickCard()}
+    if (S.billsView === 'cal') return `${weatherBanner()}${setupBanner()}${[0, 1].includes(new Date().getDay()) || !storySeen() && new Date().getDay() === 2 ? storyBar() : ''}${monthNav()}
+      ${heroCarousel(utilTotals(md), billsHero(md, pct))}
       ${billsViewSwitch()}
       ${calendarView()}`;
-    return `${weatherBanner()}${setupBanner()}${storyBar()}${monthNav()}
-      ${utilTotals(md)}
-      ${billsHero(md, pct)}
-      ${quickCard()}
+    return `${weatherBanner()}${setupBanner()}${[0, 1].includes(new Date().getDay()) || !storySeen() && new Date().getDay() === 2 ? storyBar() : ''}${monthNav()}
+      ${heroCarousel(utilTotals(md), billsHero(md, pct))}
       ${billsViewSwitch()}
       ${timeline(md)}
       <div class="chips" role="group" aria-label="Show place">${unitChips}</div>
@@ -1085,6 +1088,13 @@
       ${tile('all', '🧾', 'Total bills', t.Gas + t.Electric + t.Water, 'Gas + electric + water' + (t.Water ? ' (' + money0(t.Water) + ')' : '') + (miss ? ' · ' + miss + ' not in yet' : ''))}
     </section>`;
   }
+  function heroCarousel(a, b) {
+    if (!a) return b;
+    const i = S.heroSlide || 0;
+    return `<div class="herocar-wrap"><div class="herocar" data-herocar="1" aria-label="Month overview, swipe for more">
+        <div class="hc-slide">${b}</div><div class="hc-slide">${a}</div></div>
+      <div class="hc-dots" role="group" aria-label="Choose card">${['Still to pay', 'Utility totals'].map((l, k) => `<button type="button" data-act="hero-slide" data-i="${k}" aria-label="${l}" aria-pressed="${k === i}"></button>`).join('')}</div></div>`;
+  }
   function billsViewSwitch() {
     return `<div class="seg viewseg" role="group" aria-label="Bills view">${[['list', 'List'], ['cal', 'Calendar']].map(([v, l]) => `<button type="button" data-act="bills-view" data-v="${v}" aria-pressed="${S.billsView === v}">${l}</button>`).join('')}</div>`;
   }
@@ -1135,8 +1145,8 @@
       ${chips.length && !S.askBusy ? `<div class="talk-chips">${chips.map((q) => `<button type="button" class="chip" data-act="ask-suggest" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>` : ''}
       <form class="row talk-form" data-form="ask">
         <label for="ask-q" class="sr">Ask or tell your house</label>
-        <input class="input" id="ask-q" name="q" placeholder="“Paid PSEG $96” or ask anything" autocomplete="off" enterkeyhint="send" style="flex:1;min-width:0">
-        ${mic}<button class="btn primary-soft" type="submit" ${S.askBusy ? 'disabled' : ''}>Send</button>
+        <input class="input" id="ask-q" name="q" placeholder="Paid PSEG $96 · or ask anything" autocomplete="off" enterkeyhint="send" style="flex:1;min-width:0">
+        ${mic}<label class="iconbtn cambtn" aria-label="Scan a paper bill" title="Scan a paper bill"><input type="file" accept="image/*" capture="environment" class="sr" data-change="scan-bill">${ICON.camera}</label><button class="btn primary-soft" type="submit" ${S.askBusy ? 'disabled' : ''}>Send</button>
       </form>
       <p class="small muted">AI can make mistakes. You approve every change. Account numbers, phones and emails aren’t sent.</p>
     </div></div>`;
@@ -1387,6 +1397,10 @@
       ${homes.length ? `<div class="homechip"><svg width="28" height="24" viewBox="0 0 56 48" aria-hidden="true"><path d="M28 4 L52 22 L4 22 Z" style="fill:#7FD1B4"></path><rect x="10" y="22" width="36" height="24" rx="2" style="fill:#34403B;stroke:#7FD1B4;stroke-width:3"></rect></svg><span>${esc(homes.map((u) => u.name).join(', '))} · your home, kept separate</span></div>` : ''}
     </section>`;
   }
+  function lastRentMethod(r) {
+    const prev = Object.values(S.rentPays).filter((p) => p.rental_id === r.id && p.method && Number(p.amount_received) > 0).sort((a, b) => b.period.localeCompare(a.period))[0];
+    return prev ? prev.method : 'Zelle';
+  }
   function rentCard(x) {
     const r = x.r, done = x.st.k === 'paid';
     const unit = unitName(r.unit_id);
@@ -1404,6 +1418,10 @@
           ${x.rp && x.rp.source === 'email' ? '<span class="small muted">Recorded from Zelle email</span>' : ''}
         </div>
       </div>
+      ${!done && x.due != null ? (S.partial === r.id ? `<form class="row partialrow" data-form="partial" data-id="${r.id}" style="gap:6px">
+          <label class="sr" for="pt-${r.id}">Amount received</label><input class="input num" id="pt-${r.id}" name="amt" inputmode="decimal" placeholder="Amount received" style="flex:1;min-width:0" autocomplete="off">
+          <button class="btn primary-soft" type="submit">Save</button><button class="btn" type="button" data-act="partial-cancel">Cancel</button></form>`
+        : `<div class="btns gotrow"><button class="btn gotbtn" data-act="rent-toggle" data-id="${r.id}" style="flex:2">✓ Got ${money(x.due - x.got)}<span class="small"> · ${esc(lastRentMethod(r))}</span></button><button class="btn" data-act="partial" data-id="${r.id}" style="flex:1">Partial</button></div>`) : ''}
       <div class="btns">
         ${!done && x.due != null && r.phone ? `<a class="btn" href="sms:${esc(r.phone.replace(/[^\d+]/g, ''))}${isIOS ? '&' : '?'}body=${msg}">Text reminder</a>` : ''}
         ${r.phone ? `<a class="btn" href="tel:${esc(r.phone.replace(/[^\d+]/g, ''))}">Call</a>` : ''}
@@ -1478,7 +1496,11 @@
     } else {
       const sched = tasks.filter((x) => x.st.k !== 'setup');
       const un = tasks.filter((x) => x.st.k === 'setup');
-      body = requestsSection() + yearWheel() + (sched.length ? `<ul class="bills">${sched.map(taskCard).join('')}</ul>` : '') +
+      const next = sched.filter((x) => x.st.diff <= 30), later = sched.filter((x) => x.st.diff > 30);
+      body = requestsSection() +
+        (next.length ? `<h2 class="section-h">Do next <span class="count">${next.length}</span></h2><ul class="bills">${next.map(taskCard).join('')}</ul>` : (sched.length ? emptyState('calm', 'Nothing due for a month', 'The house is in good shape.') : '')) +
+        (later.length ? `<details class="paidfold" data-fold="u-later" ${isOpen('u-later', false) ? 'open' : ''}><summary><span>Later <span class="count">${later.length}</span></span><span class="small muted">next: ${esc(later[0].t.title)}</span><span class="chev" aria-hidden="true"></span></summary><ul class="bills" style="padding-top:10px">${later.map(taskCard).join('')}</ul></details>` : '') +
+        yearWheel() +
         (un.length ? `<h2 class="section-h">Not scheduled yet</h2><p class="small muted" style="margin:-8px 0 0">Tap <strong>Done</strong> and enter when it was last done; the app works out the next date.</p><ul class="bills">${un.map(taskCard).join('')}</ul>` : '') +
         (!tasks.length ? emptyState('tools', 'No upkeep tasks', 'Add the jobs that keep the house healthy.', '<button class="btn primary-soft" data-act="new-task">Add a task</button>') : '');
     }
@@ -1644,7 +1666,8 @@
         </div>
       </div>
       <div class="btns">
-        <button class="btn primary-soft" data-act="task-done" data-id="${t.id}" style="flex:1">Done</button>
+        <button class="btn primary-soft" data-act="task-done" data-id="${t.id}" style="flex:2">✓ Done</button>
+        ${t.next_due ? `<button class="btn" data-act="snooze" data-id="${t.id}" style="flex:1" aria-label="Snooze ${esc(t.title)} one week">Snooze 1 wk</button>` : ''}
         <button class="btn" data-act="task" data-id="${t.id}" style="flex:1" aria-label="Edit ${esc(t.title)}">Edit</button>
       </div>
     </li>`;
@@ -1964,7 +1987,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.7</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v2.8</p>`;
   }
 
   function importCard() {
@@ -2365,7 +2388,7 @@ function setup() {
         </div>
       </section>`;
     const details = `<section class="card">
-        <h2>${isNew ? 'New bill' : 'Bill details'}</h2>
+        <h2>${isNew ? 'New bill' : 'Bill settings'}</h2>
         ${f('b-name', 'Provider / name', inp('b-name', 'name', b.name, 'required placeholder="e.g. Optimum internet"'))}
         <div class="grid2">${f('b-label', 'Label', inp('b-label', 'label', b.label, 'placeholder="Optional"'))}${f('b-acct', 'Account #', inp('b-acct', 'account_number', b.account_number, 'inputmode="numeric"'))}</div>
         <div class="grid2">${f('b-cat', 'Category', `<select class="input" id="b-cat" name="category">${opts(CATEGORIES, b.category)}</select>`)}${f('b-unit', 'Where', `<select class="input" id="b-unit" name="unit_id">${unitOptions(b.unit_id)}</select>`)}</div>
@@ -2379,7 +2402,8 @@ function setup() {
         ${f('b-url', 'Payment website', inp('b-url', 'pay_url', b.pay_url, 'type="url" inputmode="url" placeholder="https://"'))}
         ${f('b-notes', 'Notes', `<textarea class="input" id="b-notes" name="notes">${esc(b.notes)}</textarea>`)}
       </section>`;
-    return sheetShell(isNew ? 'Add bill' : billTitle(b), 'bill', (isNew ? '' : billDetailTop(b, pay)) + month + loan + details, isNew ? null : 'Delete bill and its history');
+    const settings = isNew ? details : `<details class="card fold editfold" data-fold="bill-edit" ${isOpen('bill-edit', false) ? 'open' : ''}><summary><h2>Edit bill</h2><span class="small muted">name, account #, due day, autopay…</span><span class="chev" aria-hidden="true"></span></summary><div class="fold-body">${details.replace(/^<section class="card">\s*<h2>Bill settings<\/h2>/, '').replace(/<\/section>$/, '')}</div></details>`;
+    return sheetShell(isNew ? 'Add bill' : billTitle(b), 'bill', (isNew ? '' : billDetailTop(b, pay)) + month + (isNew ? '' : loan) + settings + (isNew ? loan : ''), isNew ? null : 'Delete bill and its history');
   }
 
   function rentalSheet(sh) {
@@ -2496,13 +2520,15 @@ function setup() {
       case 'edit': { S.editing = id; render(); const n = document.getElementById('a-' + id); if (n) n.focus(); break; }
       case 'done': S.editing = null; render(); break;
       case 'toggle': {
-        const b = findBill(id); const pay = getPay(b, S.month);
-        if (pay && pay.paid_at) savePayment(b, S.month, { paid_at: null });
+        const b = findBill(id); const pay = getPay(b, S.month); const k = S.month;
+        const prev = { paid_at: pay ? pay.paid_at || null : null, amount: pay ? (pay.amount != null ? pay.amount : null) : null, method: pay ? pay.method || null : null };
+        const undo = () => savePayment(b, k, prev);
+        if (pay && pay.paid_at) { savePayment(b, S.month, { paid_at: null }); toast(billTitle(b) + ' marked unpaid', undo); }
         else {
           savePayment(b, S.month, { paid_at: new Date().toISOString(), amount: amountFor(b, pay), method: (pay && pay.method) || (b.autopay ? 'Autopay' : null) });
           FX.stamp = b.id; FX.stampUntil = Date.now() + 900;
           const all = billMonth(S.month, true).rows.filter((x) => !x.b.escrow);
-          if (all.length && all.every((x) => x.pay && x.pay.paid_at)) { toast('All ' + monthLabel(S.month).split(' ')[0] + ' bills paid!'); setTimeout(confetti, 350); } else toast('Marked paid');
+          if (all.length && all.every((x) => x.pay && x.pay.paid_at)) { toast('All ' + monthLabel(S.month).split(' ')[0] + ' bills paid!', undo); setTimeout(confetti, 350); } else toast(billTitle(b) + ' marked paid', undo);
           if (navigator.vibrate) navigator.vibrate(12);
         }
         render(); break;
@@ -2511,15 +2537,27 @@ function setup() {
         const r = S.rentals.find((x) => x.id === id); const rp = getRentPay(r, S.month); const due = rentDue(r, rp);
         if (due == null) break;
         const full = rp && Number(rp.amount_received || 0) >= due;
-        if (full) saveRentPay(r, S.month, { amount_received: null, received_at: null });
+        const k = S.month; const prevR = { amount_received: rp ? rp.amount_received : null, received_at: rp ? rp.received_at : null, method: rp ? rp.method || null : null };
+        const undo = () => saveRentPay(r, k, prevR);
+        if (full) { saveRentPay(r, S.month, { amount_received: null, received_at: null }); toast('Rent marked not received', undo); }
         else {
-          saveRentPay(r, S.month, { amount_due: due, amount_received: due, received_at: new Date().toISOString() });
+          saveRentPay(r, S.month, { amount_due: due, amount_received: due, received_at: new Date().toISOString(), method: (rp && rp.method) || lastRentMethod(r) });
           FX.stamp = r.id; FX.stampUntil = Date.now() + 900;
           const rm = rentMonth(S.month);
-          if (rm.rows.length && rm.rows.every((x) => x.st.k === 'paid')) { toast('All rent in for ' + monthLabel(S.month).split(' ')[0] + '!'); setTimeout(confetti, 350); } else toast('Rent marked received');
+          if (rm.rows.length && rm.rows.every((x) => x.st.k === 'paid')) { toast('All rent in for ' + monthLabel(S.month).split(' ')[0] + '!', undo); setTimeout(confetti, 350); } else toast('Got ' + money(due) + ' from ' + rentalTitle(r), undo);
           if (navigator.vibrate) navigator.vibrate(12);
         }
         render(); break;
+      }
+      case 'partial': S.partial = id; render(); setTimeout(() => { const n = document.getElementById('pt-' + id); if (n) n.focus(); }, 50); break;
+      case 'partial-cancel': S.partial = null; render(); break;
+      case 'toast-undo': runUndo(); break;
+      case 'hero-slide': { S.heroSlide = +el.dataset.i; const c = document.querySelector('.herocar'); if (c) c.scrollTo({ left: c.clientWidth * S.heroSlide, behavior: reduceMotion() ? 'auto' : 'smooth' }); document.querySelectorAll('.hc-dots button').forEach((d, k) => d.setAttribute('aria-pressed', k === S.heroSlide)); break; }
+      case 'snooze': {
+        const t = S.tasks.find((x) => x.id === id); if (!t) break; const before = Object.assign({}, t);
+        const base = t.next_due && fromIso(t.next_due) > today() ? fromIso(t.next_due) : today();
+        saveTask(Object.assign({}, t, { next_due: isoDate(new Date(base.getTime() + 7 * 86400000)) }));
+        render(); toast(t.title + ' snoozed a week', () => saveTask(before)); break;
       }
       case 'copy':
         try { await navigator.clipboard.writeText(el.dataset.text); toast('Copied ' + el.dataset.text); } catch (_) { toast(el.dataset.text); }
@@ -2791,11 +2829,12 @@ function setup() {
       const t = S.tasks.find((x) => x.id === S.sheet.id);
       const on = val('done_on');
       if (!on) return fail('Pick the date it was done.');
-      saveLog({ id: uuid(), household_id: S.household.id, task_id: t.id, unit_id: t.unit_id, title: t.title, done_on: on, cost: num(val('cost')), vendor: val('vendor') || null, notes: val('notes') || null, receipt_path: null, created_at: new Date().toISOString() });
+      const logId = uuid(); const before = Object.assign({}, t);
+      saveLog({ id: logId, household_id: S.household.id, task_id: t.id, unit_id: t.unit_id, title: t.title, done_on: on, cost: num(val('cost')), vendor: val('vendor') || null, notes: val('notes') || null, receipt_path: null, created_at: new Date().toISOString() });
       const nt = Object.assign({}, t, { last_done: on, vendor: val('vendor') || t.vendor });
       if (t.interval_months) nt.next_due = addMonthsIso(on, t.interval_months); else { nt.next_due = null; nt.active = false; }
       saveTask(nt);
-      S.sheet = null; render(); toast(t.interval_months ? 'Done — next one ' + fmtDate(fromIso(nt.next_due)) : 'Done');
+      S.sheet = null; render(); toast(t.interval_months ? 'Done — next one ' + fmtDate(fromIso(nt.next_due)) : 'Done', () => { deleteRow('logs', logId); saveTask(before); });
     } else if (kind === 'log') {
       const isNew = S.sheet.type === 'new-log';
       const l = isNew ? { id: uuid(), household_id: S.household.id, task_id: null, receipt_path: null, created_at: new Date().toISOString() } : S.logs.find((x) => x.id === S.sheet.id);
@@ -2844,6 +2883,13 @@ function setup() {
       try { const j = await assist({ mode: 'parse', text, context: quickContext() }); S.quick = { text, actions: j.actions || [], note: j.note || null }; }
       catch (e) { S.quick = { text, error: e.message }; }
       render();
+    } else if (kind === 'partial') {
+      const r = S.rentals.find((x) => x.id === form.dataset.id); if (!r) return;
+      const amt = num(val('amt')); if (!(amt > 0)) { toast('Enter the amount you got'); return; }
+      const k = S.month; const rp = getRentPay(r, k); const due = rentDue(r, rp);
+      const prevR = { amount_received: rp ? rp.amount_received : null, received_at: rp ? rp.received_at : null, method: rp ? rp.method || null : null };
+      saveRentPay(r, k, { amount_due: due, amount_received: Math.round((Number((rp && rp.amount_received) || 0) + amt) * 100) / 100, received_at: new Date().toISOString(), method: (rp && rp.method) || lastRentMethod(r) });
+      S.partial = null; render(); toast('Got ' + money(amt) + ' from ' + rentalTitle(r), () => saveRentPay(r, k, prevR));
     } else if (kind === 'ask') {
       const q = val('q'); if (!q || S.askBusy) return;
       form.reset(); askQuestion(q);
@@ -3060,6 +3106,11 @@ function setup() {
 
   // Swipe cards right (paid) / left (details); swipe the month header to change month
   let suppressClick = 0;
+  document.addEventListener('scroll', (e) => {
+    const c = e.target; if (!c || !c.dataset || !c.dataset.herocar) return;
+    const i = Math.round(c.scrollLeft / Math.max(1, c.clientWidth)); if (i === S.heroSlide) return;
+    S.heroSlide = i; document.querySelectorAll('.hc-dots button').forEach((d, k) => d.setAttribute('aria-pressed', k === i));
+  }, true);
   // Weekly story: move to the next slide when its progress bar fills
   document.addEventListener('animationend', (e) => { if (S.story && e.target.matches && e.target.matches('.sbar i.on')) storyGo(S.story.i + 1); });
   // Bill detail: drag the knob across to mark paid (a tap works too)
