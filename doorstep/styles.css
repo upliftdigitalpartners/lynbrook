@@ -872,3 +872,34 @@ button.ut.on { box-shadow: 0 0 0 2px var(--accent); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .paidstamp { color: var(--stamp); border-color: var(--stamp); } }
 :root[data-theme="dark"] .lp-eyebrow { color: #E9C46A; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .lp-eyebrow { color: #E9C46A; } }
+
+/* ===== Tide + Stack: water-fill hero, rolling digits, cards deal in ===== */
+:root { --water: #3D5CC4; --water-2: rgba(61,92,196,.45); }
+.tide { position: relative; width: 210px; height: 210px; border-radius: 50%; overflow: hidden; background: var(--hero-track); box-shadow: 0 0 0 8px rgba(169,188,245,.10); align-self: center; flex: none; }
+.tide.sm { width: 112px; height: 112px; box-shadow: 0 0 0 5px rgba(169,188,245,.10); }
+.tide-lvl { position: absolute; left: -50%; width: 200%; height: 200%; top: var(--lvl); transition: top 1.4s cubic-bezier(.3,.7,.2,1); }
+.tide.still .tide-lvl { transition: none; }
+.tide-w { position: absolute; inset: 0; border-radius: 43%; background: var(--water); animation: tidespin 9s linear infinite; }
+.tide-w.a { background: var(--water-2); top: -3%; animation-duration: 13s; animation-direction: reverse; }
+.tide-c { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; text-align: center; color: var(--hero-ink); text-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.tide-c .label { color: var(--hero-ink); opacity: .9; }
+.tide-c .big { font-size: 30px; }
+.tide-pct { font-family: var(--serif); font-size: 15px; font-weight: 600; }
+.tide.sm .tide-pct { font-size: 24px; line-height: 1; }
+@keyframes tidespin { to { transform: rotate(360deg); } }
+.househero .tide { margin: 4px 0 6px; }
+
+.roll { display: inline-flex; line-height: 1.1; }
+.rd { display: inline-block; height: 1.1em; overflow: hidden; }
+.rd-col { display: flex; flex-direction: column; transform: translateY(calc(var(--d) * -1.1em)); transition: transform .9s cubic-bezier(.2,.9,.1,1); }
+.rd-col span { height: 1.1em; line-height: 1.1em; text-align: center; }
+.roll.still .rd-col { transition: none; }
+
+.bills > li.deal { animation: deal .5s cubic-bezier(.2,.9,.2,1) both; }
+@keyframes deal { from { opacity: 0; transform: translateY(26px) rotate(1.2deg); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .tide-w { animation: none; }
+  .tide-lvl, .rd-col { transition: none; }
+  .bills > li.deal { animation: none; }
+}
