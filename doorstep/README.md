@@ -33,6 +33,8 @@ Doorstep's database = the shared migrations `supabase/migrations/001–010` + Do
 - `doorstep/supabase/migrations/011_doorstep.sql` adds `create_household()` for self-service sign-up.
 - `doorstep/supabase/migrations/012_demo.sql` adds the demo and its nightly reset.
 
+AI (Ask, bill scanning, recaps) uses Doorstep's own `GROQ_API_KEY` secret, separate from Evergreen's, with daily limits per person.
+
 Edge functions live in `doorstep/supabase/functions` (assist, scan-bill, tenant, weather) with prompts that aren't specific to Evergreen. Deploy from `doorstep/`:
 
 ```bash
@@ -69,7 +71,6 @@ npx supabase functions deploy assist scan-bill tenant weather --project-ref aprl
 
 ## Still needed
 
-- **AI features** (Ask, scan a bill, recap) need a `GROQ_API_KEY` secret on the Doorstep Supabase project: Project Settings › Edge Functions › Secrets. Use a separate Groq key from Evergreen's, so demo visitors can't use up Evergreen's limits.
 - **Texting or emailing tenants automatically** needs a paid SMS or email service (for example Twilio or Resend).
 - **A custom domain** and **online rent payments** (Stripe) need accounts in your name.
 - Have someone qualified review the Privacy and Terms pages before a public launch.
