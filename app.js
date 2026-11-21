@@ -805,6 +805,7 @@
     try { renderNow(); } finally { rendering = false; }
   }
   function renderNow() {
+    document.documentElement.classList.toggle('simple', simple());
     const app = document.getElementById('app');
     const y = window.scrollY;
     const ae = document.activeElement;
@@ -878,6 +879,7 @@
 
   function appView() {
     if (S.tour === undefined) S.tour = tourSeen() || !S.household ? null : 0;
+    if (S.tab === 'personal' && !visibleTabs().some((t) => t[0] === 'personal')) { S.tab = 'bills'; S.unit = 'personal'; }
     if (!['summary', 'settings'].includes(S.tab) && !visibleTabs().some((t) => t[0] === S.tab)) S.tab = 'summary';
     const titles = { bills: tabName('bills', 'Bills'), rent: tabName('rent', 'Rent'), upkeep: tabName('upkeep', 'House'), summary: tabName('summary', 'Home'), personal: tabName('personal', 'Personal'), settings: 'Settings' };
     const houseAdd = { upcoming: ['new-task', 'Add upkeep task'], history: ['new-log', 'Log a repair'], appliances: ['new-appliance', 'Add appliance'], pros: ['new-contractor', 'Add contractor'], docs: ['new-doc', 'Add document'] };
@@ -892,13 +894,13 @@
     return `<div class="shell">
       <header class="topbar">
         <div class="topbar-row"><span class="eyebrow">${esc(addr)}</span>${offline}</div>
-        <div class="topbar-row"><h1 class="display">${esc(titles[S.tab])}</h1><span class="topbar-actions"><button class="iconbtn gearbtn" data-act="tab" data-tab="settings" aria-label="Settings" title="Settings" ${S.tab === 'settings' ? 'aria-current="page"' : ''}>${ICON.settings}</button>${add ? `<button class="addbtn" data-act="${add[0]}" aria-label="${add[1]}">${ICON.plus}<span>Add</span></button>` : ''}</span></div>
+        <div class="topbar-row"><h1 class="display">${esc(titles[S.tab])}</h1><span class="topbar-actions"><button class="iconbtn gearbtn" data-act="tab" data-tab="settings" aria-label="Settings" title="Settings" ${S.tab === 'settings' ? 'aria-current="page"' : ''}>${ICON.settings}</button>${add && !simple() ? `<button class="addbtn" data-act="${add[0]}" aria-label="${add[1]}">${ICON.plus}<span>Add</span></button>` : ''}</span></div>
       </header>
       ${S.updateReady ? '<div class="updbar" role="status"><span>A new version is ready.</span><button type="button" class="btn sm" data-act="app-reload">Refresh</button></div>' : ''}
       <main class="main">${body}</main>
       <nav class="tabbar" aria-label="App sections"><div class="tabbar-inner" style="grid-template-columns:repeat(${vt.length}, minmax(0, 1fr))">${tabs}</div></nav>
       ${S.sheet ? sheetView() : ''}
-      ${S.tab !== 'settings' && !S.sheet ? '<button class="fab" data-act="ask-open" aria-label="Ask or add: type, speak or scan a bill"><span aria-hidden="true">✦</span> Ask or add</button>' : ''}
+      ${S.tab !== 'settings' && !S.sheet ? (simple() ? '<button class="fab" data-act="add-menu" aria-label="Add a bill, payment, tenant or repair, or ask a question"><span aria-hidden="true">＋</span> Add</button>' : '<button class="fab" data-act="ask-open" aria-label="Ask or add: type, speak or scan a bill"><span aria-hidden="true">✦</span> Ask or add</button>') : ''}
       ${S.story ? storyView() : ''}
       ${S.tour != null ? tourView() : ''}
     </div>`;
@@ -1019,8 +1021,9 @@
     const md = billMonth(S.month);
     const pct = md.total > 0 ? Math.round((md.paid / md.total) * 100) : 0;
     const floors = S.units.filter((u) => isFloor(u.name) && !isPersonal(u.id));
-    const unitChips = [['all', 'Everything']].concat(floors.map((u) => [u.id, u.name]))
+    const unitChips = [['all', 'Everything']].concat(floors.map((u) => [u.id, u.name])).concat(personalUnit() && !visibleTabs().some((t) => t[0] === 'personal') ? [['personal', 'Personal']] : [])
       .map(([id, l]) => `<button class="chip" data-act="unit" data-unit="${esc(id)}" aria-pressed="${S.unit === id}">${esc(l)}</button>`).join('');
+    if (S.unit === 'personal') return `<div class="chips" role="group" aria-label="Show place">${unitChips}</div>` + personalTab();
     const isPaid = (r) => !!(r.pay && r.pay.paid_at);
     const CF = { Gas: ['Gas'], Electric: ['Electric'], util: ['Gas', 'Electric', 'Water'] };
     const rows = S.catFilter && CF[S.catFilter] ? md.rows.filter((r) => CF[S.catFilter].includes(r.b.category)) : md.rows;
@@ -1042,21 +1045,35 @@
         + (later.length ? `<h2 class="section-h">Coming up <span class="count">${later.length}</span></h2>${list(later)}` : '')
         + (cfLabel && !rows.length ? emptyState('empty', 'No ' + cfLabel.toLowerCase() + ' this month', '') : '') + (rows.length && !attention.length && !later.length ? emptyState('done', 'All caught up', 'Every ' + monthLabel(S.month).split(' ')[0] + ' bill is paid. Enjoy the quiet.') : '')
         + (paid.length ? `<details class="paidfold" data-fold="b-paid" ${isOpen('b-paid', false) ? 'open' : ''}><summary><span>Paid <span class="count">${paid.length}</span></span><span class="num muted">${money(paidSum)}</span><span class="chev" aria-hidden="true"></span></summary><ul class="prows">${paid.map(paidRow).join('')}</ul></details>` : '');
-    if (S.billsView === 'cal') return `${weatherBanner()}${setupBanner()}${[0, 1].includes(new Date().getDay()) || !storySeen() && new Date().getDay() === 2 ? storyBar() : ''}${monthNav()}
+    if (S.billsView === 'cal') return `${topBanners()}${monthNav()}
       ${heroCarousel(utilTotals(md), billsHero(md, pct))}
       ${billsViewSwitch()}
       ${calendarView()}`;
-    return `${weatherBanner()}${setupBanner()}${[0, 1].includes(new Date().getDay()) || !storySeen() && new Date().getDay() === 2 ? storyBar() : ''}${monthNav()}
+    return `${topBanners()}${monthNav()}
       ${heroCarousel(utilTotals(md), billsHero(md, pct))}
       ${billsViewSwitch()}
-      ${timeline(md)}
+      ${simple() ? '' : timeline(md)}
       <div class="chips" role="group" aria-label="Show place">${unitChips}</div>
       ${cfLabel ? `<div class="cf-bar" id="bill-list"><span>Showing <strong>${esc(cfLabel)}</strong> · ${money(rows.reduce((t, r) => t + (r.amt || 0), 0))}</span><button type="button" class="linkbtn" data-act="cat-filter" data-v="">Show all</button></div>` : '<span id="bill-list"></span>'}
       ${body}`;
   }
 
 
+  function qstat(k, label) { return `<span class="qstat ${k}"><i aria-hidden="true"></i>${esc(label)}</span>`; }
+  const LESS = (id) => `<button type="button" class="iconbtn qless" data-act="expand" data-id="${id}" aria-label="Show less">▴</button>`;
   function billCard(r) {
+    if (!simple()) return billCardFull(r);
+    if (S.open === r.b.id) return billCardFull(r).replace('<div class="bill-top">', LESS(r.b.id) + '<div class="bill-top">');
+    const b = r.b, paid = !!(r.pay && r.pay.paid_at); const justPaid = paid && FX.stamp === b.id && Date.now() < FX.stampUntil;
+    const spike = spikeLabel(b, r.amt);
+    return `<li class="bill qrow swipe ${paid ? 'paid' : ''}${S.nudgeId === b.id && !paid ? ' nudge' : ''}" id="bill-${b.id}" data-swipe-right="toggle" data-swipe-left="bill" data-id="${b.id}" data-paid="${paid}">
+      <button class="check labeled" data-act="toggle" data-id="${b.id}" aria-pressed="${paid}" aria-label="${paid ? 'Mark unpaid' : 'Mark paid'}: ${esc(billTitle(b))}, ${esc(unitName(b.unit_id))}">${ICON.check}<span class="ilab" aria-hidden="true">${paid ? 'Paid' : 'Pay'}</span></button>
+      <button type="button" class="qmain" data-act="expand" data-id="${b.id}" aria-expanded="false" aria-label="${esc(billTitle(b))}, ${esc(r.st.label)}. Show details"><span class="qname">${esc(billTitle(b))} <span class="qplace">${esc(unitName(b.unit_id))}</span></span>${qstat(r.st.k, r.st.label)}${spike ? `<span class="qflag">${esc(spike)}</span>` : ''}</button>
+      <span class="qamt num">${r.amt != null ? money(r.amt) : '—'}</span>
+      ${justPaid ? '<span class="paidstamp mini slam" aria-hidden="true">PAID</span>' : ''}
+    </li>`;
+  }
+  function billCardFull(r) {
     const b = r.b, paid = !!(r.pay && r.pay.paid_at);
     const complete = r.amt != null && r.due;
     const editing = S.editing === b.id || !complete;
@@ -1431,7 +1448,7 @@
       ${depDue.map((r) => { const by = new Date(fromIso(r.move_out_on).getTime() + 14 * 86400000); const d = dayDiff(by); return `<p class="notice${d <= 3 ? '' : ' info'}">Return ${esc(rentalTitle(r))}’s deposit${r.deposit ? ' (' + money(r.deposit) + ')' : ''} with an itemized list by <strong>${fmtDate(by)}</strong>${d >= 0 ? ' (' + d + ' days)' : ' (overdue)'}. <button class="linkbtn" data-act="moveout" data-id="${r.id}" style="min-height:0;padding:0">Record it</button></p>`; }).join('')}
       ${unmatchedCard()}
       ${vacantCards()}
-      ${md.rows.length ? `<ul class="bills">${md.rows.map(rentCard).join('')}</ul>` : emptyState('people', 'No tenants yet', 'Add each floor’s tenant to track rent.', '<button class="btn primary-soft" data-act="new-rental">Add a tenant</button>')}
+      ${rentList(md)}
       ${mortgageCard()}`;
   }
   const TURNOVER = ['Repairs from move-out inspection', 'Paint touch-ups', 'Deep clean', 'Change locks', 'Test smoke & CO detectors', 'Take listing photos', 'List the unit', 'Schedule showings', 'Screen applicants', 'Sign lease & collect deposit'];
@@ -1508,7 +1525,25 @@
     if (recs < 2) return '';
     return `<div class="paystrip" role="img" aria-label="Last 12 months: ${onTime} of ${counted} on time"><div class="ps-row">${cells.join('')}</div><span class="small muted">${onTime} of ${counted} on time · last 12 months</span></div>`;
   }
+  function rentList(md) {
+    if (!md.rows.length) return emptyState('people', 'No tenants yet', 'Add each floor’s tenant to track rent.', '<button class="btn primary-soft" data-act="new-rental">Add a tenant</button>');
+    if (!simple()) return `<ul class="bills">${md.rows.map(rentCard).join('')}</ul>`;
+    const open = md.rows.filter((x) => x.st.k !== 'paid'), done = md.rows.filter((x) => x.st.k === 'paid');
+    return (open.length ? `<ul class="bills">${open.map(rentCard).join('')}</ul>` : emptyState('done', 'All rent is in', 'Every tenant has paid for ' + monthLabel(S.month).split(' ')[0] + '.'))
+      + (done.length ? `<details class="paidfold" data-fold="r-paid" ${isOpen('r-paid', false) ? 'open' : ''}><summary><span>Paid <span class="count">${done.length}</span></span><span class="num muted">${money(done.reduce((t, x) => t + x.got, 0))}</span><span class="chev" aria-hidden="true"></span></summary><ul class="bills">${done.map(rentCard).join('')}</ul></details>` : '');
+  }
   function rentCard(x) {
+    if (!simple()) return rentCardFull(x);
+    if (S.open === x.r.id) return rentCardFull(x).replace('<div class="bill-top">', LESS(x.r.id) + '<div class="bill-top">');
+    const r = x.r, done = x.st.k === 'paid'; const justPaid = done && FX.stamp === r.id && Date.now() < FX.stampUntil;
+    return `<li class="bill qrow swipe ${done ? 'paid' : ''}" id="rent-${r.id}" ${x.due != null ? 'data-swipe-right="rent-toggle"' : ''} data-swipe-left="rental" data-id="${r.id}" data-paid="${done}">
+      <button class="check labeled" data-act="rent-toggle" data-id="${r.id}" aria-pressed="${done}" aria-label="${done ? 'Mark not received' : 'Mark received'}: rent from ${esc(rentalTitle(r))}" ${x.due == null ? 'disabled' : ''}>${ICON.check}<span class="ilab" aria-hidden="true">${done ? 'Got' : 'Got?'}</span></button>
+      <button type="button" class="qmain" data-act="expand" data-id="${r.id}" aria-expanded="false" aria-label="${esc(rentalTitle(r))}, ${esc(x.st.label)}. Show details"><span class="qname">${esc(r.tenant_name || 'Tenant')} <span class="qplace">${esc(unitName(r.unit_id))}</span></span>${qstat(x.st.k, x.st.label)}</button>
+      <span class="qamt num">${x.due != null ? money(done ? x.got : Math.max(0, x.due - x.got)) : '—'}</span>
+      ${justPaid ? '<span class="paidstamp mini slam" aria-hidden="true">PAID</span>' : ''}
+    </li>`;
+  }
+  function rentCardFull(x) {
     const r = x.r, done = x.st.k === 'paid';
     const unit = unitName(r.unit_id);
     const d = dueOn(r.due_day, S.month);
@@ -1612,7 +1647,7 @@
       body = requestsSection() +
         (next.length ? `<h2 class="section-h">Do next <span class="count">${next.length}</span></h2><ul class="bills">${next.map(taskCard).join('')}</ul>` : (sched.length ? emptyState('calm', 'Nothing due for a month', 'The house is in good shape.') : '')) +
         (later.length ? `<details class="paidfold" data-fold="u-later" ${isOpen('u-later', false) ? 'open' : ''}><summary><span>Later <span class="count">${later.length}</span></span><span class="small muted">next: ${esc(later[0].t.title)}</span><span class="chev" aria-hidden="true"></span></summary><ul class="bills" style="padding-top:10px">${later.map(taskCard).join('')}</ul></details>` : '') +
-        yearWheel() +
+        (simple() ? '' : yearWheel()) +
         (un.length ? `<h2 class="section-h">Not scheduled yet</h2><p class="small muted" style="margin:-8px 0 0">Tap <strong>Done</strong> and enter when it was last done; the app works out the next date.</p><ul class="bills">${un.map(taskCard).join('')}</ul>` : '') +
         (!tasks.length ? emptyState('tools', 'No upkeep tasks', 'Add the jobs that keep the house healthy.', '<button class="btn primary-soft" data-act="new-task">Add a task</button>') : '');
     }
@@ -1623,7 +1658,7 @@
         <div class="foot"><span class="${overdue ? 'late' : ''}">${overdue} overdue · ${soon} due in 30 days${unsched ? ' · ' + unsched + ' not scheduled' : ''}</span></div>
         <div class="foot"><span>Spent on upkeep in ${yr}</span><span class="num">${money(spent)}</span></div>
       </section>
-      <div class="btns"><button class="btn" data-act="new-log" style="flex:1">Log a repair</button><button class="btn" data-act="new-task" style="flex:1">Add a task</button></div>
+      ${simple() ? '' : '<div class="btns"><button class="btn" data-act="new-log" style="flex:1">Log a repair</button><button class="btn" data-act="new-task" style="flex:1">Add a task</button></div>'}
       ${body}`;
   }
 
@@ -1768,6 +1803,15 @@
     </section>`;
   }
   function taskCard(x) {
+    if (!simple()) return taskCardFull(x);
+    if (S.open === x.t.id) return taskCardFull(x).replace('<div class="bill-top">', LESS(x.t.id) + '<div class="bill-top">');
+    const t = x.t;
+    return `<li class="bill qrow" id="task-${t.id}">
+      <button class="check labeled" data-act="task-done" data-id="${t.id}" aria-label="Mark done: ${esc(t.title)}">${ICON.check}<span class="ilab" aria-hidden="true">Done</span></button>
+      <button type="button" class="qmain" data-act="expand" data-id="${t.id}" aria-expanded="false" aria-label="${esc(t.title)}, ${esc(x.st.label)}. Show details"><span class="qname">${esc(t.title)} <span class="qplace">${esc(unitName(t.unit_id))}</span></span>${qstat(x.st.k, x.st.label)}</button>
+    </li>`;
+  }
+  function taskCardFull(x) {
     const t = x.t;
     return `<li class="bill">
       <div class="bill-top">
@@ -1951,21 +1995,65 @@
   }
   // ===== Customize (saved on this device) =====
   const TAB_DEFS = [['bills', 'Bills'], ['rent', 'Rent'], ['upkeep', 'House'], ['personal', 'Personal']];
-  const HOME_DEFS = [['headline', 'Month in one sentence'], ['income', 'Income & expenses'], ['week', 'Your week'], ['recap', 'AI recap'], ['stats', 'Rental numbers'], ['flow', 'Where the rent goes'], ['inout', '6-month chart'], ['ask', 'Ask about your house'], ['forecast', 'Next 3 months'], ['home', 'Your home (Cedarcroft)'], ['breakdown', 'Breakdown'], ['tax', 'Tax report']];
+  const HOME_DEFS = [['headline', 'Month in one sentence'], ['needs', 'What needs you'], ['income', 'Income & expenses'], ['week', 'Your week'], ['recap', 'AI recap'], ['stats', 'Rental numbers'], ['flow', 'Where the rent goes'], ['inout', '6-month chart'], ['ask', 'Ask about your house'], ['forecast', 'Next 3 months'], ['home', 'Your home (Cedarcroft)'], ['breakdown', 'Breakdown'], ['tax', 'Tax report']];
   function getCustom() { let c = {}; try { c = JSON.parse(localStorage.getItem('eh-custom') || '{}') || {}; } catch (_) {} c.tabs = c.tabs || {}; c.home = c.home || {}; c.names = c.names || {}; return c; }
   function setCustom(c) { try { localStorage.setItem('eh-custom', JSON.stringify(c)); } catch (_) {} }
   function ordered(defs, cfg) { const ids = defs.map((d) => d[0]); const ord = (cfg.order || []).filter((x) => ids.includes(x)); ids.forEach((x) => { if (!ord.includes(x)) ord.push(x); }); return ord.map((id) => defs.find((d) => d[0] === id)); }
-  function visibleTabs() { const c = getCustom(); const hid = c.tabs.hidden || []; return [['summary', c.names.summary || 'Home']].concat(ordered(TAB_DEFS, c.tabs).filter((d) => !hid.includes(d[0])).map(([id, l]) => [id, c.names[id] || l])); }
+  function visibleTabs() { const c = getCustom(); const hid = c.tabs.hidden || (simple() ? ['personal'] : []); return [['summary', c.names.summary || 'Home']].concat(ordered(TAB_DEFS, c.tabs).filter((d) => !hid.includes(d[0])).map(([id, l]) => [id, c.names[id] || l])); }
   function tabName(id, dflt) { return getCustom().names[id] || dflt; }
   function applyHomeLayout(html) {
     const parts = html.split(/<!--b:(\w+)-->/); const top = parts[0]; const blocks = {};
     for (let i = 1; i < parts.length; i += 2) blocks[parts[i]] = parts[i + 1];
     const c = getCustom(); const hid = c.home.hidden || [];
-    return top + ordered(HOME_DEFS, c.home).map((d) => d[0]).filter((k) => blocks[k] != null && !hid.includes(k)).map((k) => blocks[k]).join('');
+    const keys = ordered(HOME_DEFS, c.home).map((d) => d[0]).filter((k) => blocks[k] != null && !hid.includes(k) && blocks[k].trim());
+    if (!simple()) return top + keys.map((k) => blocks[k]).join('');
+    const MAIN = ['headline', 'needs', 'income'];
+    const main = keys.filter((k) => MAIN.includes(k)), rest = keys.filter((k) => !MAIN.includes(k));
+    return top + main.map((k) => blocks[k]).join('') + (rest.length ? `<details class="moreins" data-fold="home-more" ${isOpen('home-more', false) ? 'open' : ''}><summary><span>More insights</span><span class="small muted">charts, recap, forecast, taxes</span><span class="chev" aria-hidden="true"></span></summary><div class="fold-body">${rest.map((k) => blocks[k]).join('')}</div></details>` : '');
+  }
+  function addMenuSheet() {
+    const ctx = { appliances: ['🧰', 'An appliance', 'new-appliance'], pros: ['👷', 'A contractor', 'new-contractor'], docs: ['📄', 'A document', 'new-doc'] }[S.tab === 'upkeep' ? S.upkeepView : ''];
+    const opts = [['🧾', 'A bill', 'new-bill', 'Electric, gas, mortgage, taxes…'], ['👤', 'A personal expense', 'personal-add', 'Netflix, phone, gym…'], ['🔑', 'A tenant', 'new-rental', 'Name, unit and rent'],
+      ['🔧', 'A repair I paid for', 'new-log', 'What, when and how much'], ['📅', 'An upkeep task', 'new-task', 'Something to do every few months']].concat(ctx ? [[ctx[0], ctx[1], ctx[2], '']] : []);
+    return `<div class="sheet-bg" data-act="sheet-close-bg"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <div class="grabber" aria-hidden="true"></div>
+      <div class="sheet-head"><h2 id="sheet-title" class="display">Add</h2><button class="iconbtn" data-act="sheet-close" aria-label="Close">${ICON.close}</button></div>
+      <button type="button" class="addopt main" data-act="ask-open"><span class="aicon" aria-hidden="true">✦</span><span class="stack" style="gap:1px"><strong>Type or say it</strong><span class="small muted">“paid PSEG $96”, “Ana paid rent”, or ask a question</span></span></button>
+      <label class="addopt"><input type="file" accept="image/*" capture="environment" class="sr" data-change="scan-bill"><span class="aicon" aria-hidden="true">📷</span><span class="stack" style="gap:1px"><strong>Scan a paper bill</strong><span class="small muted">Take a photo; the amount and due date fill in</span></span></label>
+      <div class="addgrid">${opts.map(([i, t, a, d]) => `<button type="button" class="addopt" data-act="${a}"${a === 'personal-add' ? ' data-name="" data-cat="Other"' : ''}><span class="aicon" aria-hidden="true">${i}</span><span class="stack" style="gap:1px"><strong>${t}</strong>${d ? `<span class="small muted">${d}</span>` : ''}</span></button>`).join('')}</div>
+    </div></div>`;
+  }
+  function needsItems() {
+    const cur = monthKey(new Date()); const items = [];
+    billMonth(cur, true).rows.forEach((r) => {
+      if ((r.pay && r.pay.paid_at) || r.b.escrow || r.b.autopay || !r.due) return;
+      const d = dayDiff(r.due); if (d > 3) return;
+      items.push({ rank: d < 0 ? 0 : 1, d, icon: '🧾', title: billTitle(r.b), sub: unitName(r.b.unit_id) + ' · ' + r.st.label, amt: r.amt, act: 'toggle', id: r.b.id, btn: 'Paid' });
+    });
+    rentMonth(cur).rows.forEach((x) => { if (isHome(x.r.unit_id) || x.st.k !== 'late') return; items.push({ rank: 0, d: -1, icon: '🔑', title: rentalTitle(x.r) + '’s rent', sub: x.st.label, amt: Math.max(0, (x.due || 0) - x.got), act: 'rent-toggle', id: x.r.id, btn: 'Got it' }); });
+    S.tasks.filter((t) => t.active !== false && t.next_due).forEach((t) => { const d = dayDiff(fromIso(t.next_due)); if (d > 3) return; items.push({ rank: d < 0 ? 0 : 1, d, icon: '🔧', title: t.title, sub: taskStatus(t).label, act: 'task-done', id: t.id, btn: 'Done' }); });
+    (S.requests || []).filter((q) => q.status === 'new').forEach((q) => items.push({ rank: 0, d: -2, icon: '🛠', title: 'Repair request: ' + q.title, sub: 'From your tenant', act: 'go', tab: 'upkeep', btn: 'Open' }));
+    (S.imports || []).filter((x) => x.kind === 'zelle' && x.status === 'unmatched' && x.amount != null).forEach((x) => items.push({ rank: 1, d: 0, icon: '💸', title: 'Match a Zelle payment', sub: money(x.amount) + ' · who sent it?', act: 'go', tab: 'rent', btn: 'Review' }));
+    return items.sort((a, b) => a.rank - b.rank || a.d - b.d);
+  }
+  function needsCard() {
+    if (S.month !== monthKey(new Date())) return '';
+    const all = needsItems(); const list = S.needsAll ? all : all.slice(0, 3);
+    if (!all.length) {
+      const soon = [];
+      billMonth(S.month, true).rows.forEach((r) => { if ((r.pay && r.pay.paid_at) || !r.due || r.b.escrow) return; const d = dayDiff(r.due); if (d > 3 && d <= 10) soon.push({ d, t: billTitle(r.b) + (r.amt != null ? ' · ' + money0(r.amt) : ''), w: fmtDay(r.due) }); });
+      S.tasks.filter((t) => t.active !== false && t.next_due).forEach((t) => { const d = dayDiff(fromIso(t.next_due)); if (d > 3 && d <= 10) soon.push({ d, t: t.title, w: fmtDay(fromIso(t.next_due)) }); });
+      soon.sort((a, b) => a.d - b.d);
+      return `<section class="card needs calm" aria-label="What needs you"><div class="allgood"><span class="okdot" aria-hidden="true">✓</span><span class="stack" style="gap:1px"><strong>All caught up</strong><span class="small muted">Nothing needs you right now.</span></span></div>
+        ${soon.length ? `<ul class="soonlist">${soon.slice(0, 3).map((x) => `<li><span>${esc(x.t)}</span><span>${esc(x.w)}</span></li>`).join('')}</ul>` : ''}</section>`;
+    }
+    return `<section class="card needs" aria-label="What needs you"><h2>What needs you <span class="count">${all.length}</span></h2>
+      <ul class="needlist">${list.map((i) => `<li><span class="nicon" aria-hidden="true">${i.icon}</span><span class="stack" style="gap:1px;min-width:0;flex:1"><strong>${esc(i.title)}</strong><span class="small muted">${esc(i.sub)}</span></span>${i.amt != null ? `<span class="num nm">${money0(i.amt)}</span>` : ''}<button type="button" class="btn sm primary-soft" data-act="${i.act}"${i.id ? ` data-id="${i.id}"` : ''}${i.tab ? ` data-tab="${i.tab}"` : ''}>${i.btn}</button></li>`).join('')}</ul>
+      ${all.length > 3 ? `<button type="button" class="linkbtn" data-act="needs-all" style="align-self:flex-start;padding:0">${S.needsAll ? 'Show less' : 'See all ' + all.length}</button>` : ''}</section>`;
   }
   function moveIn(list, id, dir) { const i = list.indexOf(id), j = i + dir; if (i < 0 || j < 0 || j >= list.length) return list; const a = list.slice(); [a[i], a[j]] = [a[j], a[i]]; return a; }
   function customizeCard() {
-    const c = getCustom(); const th = c.tabs.hidden || [], hh = c.home.hidden || [];
+    const c = getCustom(); const th = c.tabs.hidden || (simple() ? ['personal'] : []), hh = c.home.hidden || [];
     const tabs = ordered(TAB_DEFS, c.tabs);
     const home = ordered(HOME_DEFS, c.home);
     const arrows = (kind, id, i, n) => `<span class="cz-arrows"><button type="button" class="iconbtn sm" data-act="cz-move" data-kind="${kind}" data-id="${id}" data-dir="-1" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>↑</button><button type="button" class="iconbtn sm" data-act="cz-move" data-kind="${kind}" data-id="${id}" data-dir="1" aria-label="Move down" ${i === n - 1 ? 'disabled' : ''}>↓</button></span>`;
@@ -2020,6 +2108,7 @@
           <span>${monthLabel(r.k, true)}</span></div>`).join('')}</div>`;
     return `${monthNav()}
       <!--b:headline-->${summaryHeadline(S.month)}
+      <!--b:needs-->${needsCard()}
       <!--b:income-->${incomeCard(S.month)}
       <!--b:week-->${storyBar()}
       <!--b:recap-->${recapCard()}
@@ -2177,6 +2266,10 @@
       ${customizeCard()}
       <section class="card" aria-label="Appearance">
         <h2>Appearance</h2>
+        <p class="lab small" style="margin:0">Layout</p>
+        <div class="seg theme-seg" role="group" aria-label="Layout">${[['simple', 'Simple'], ['detailed', 'Detailed']].map(([v, l]) => `<button data-act="density" data-v="${v}" aria-pressed="${getDensity() === v}">${l}</button>`).join('')}</div>
+        <p class="small muted">Simple shows only what needs you, with details a tap away. Detailed shows everything at once.</p>
+        <p class="lab small" style="margin:6px 0 0">Light or dark</p>
         <div class="seg theme-seg" role="group" aria-label="Light or dark">${[['auto', 'Automatic'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<button data-act="theme" data-v="${v}" aria-pressed="${th === v}">${l}</button>`).join('')}</div>
         <p class="small muted">Automatic follows your phone’s light or dark setting. This choice is saved on this device only.</p>
         <p class="lab small" style="margin:6px 0 0">Text size</p>
@@ -2230,7 +2323,7 @@
         <button class="btn block" data-act="refresh">Refresh data</button>
         <button class="btn block danger" data-act="signout">Sign out</button>
       </section>
-      <p class="small muted" style="text-align:center">Evergreen House · v2.13.4</p>`;
+      <p class="small muted" style="text-align:center">Evergreen House · v3.0</p>`;
   }
 
   function importCard() {
@@ -2381,6 +2474,19 @@ function setup() {
     lastBadge = n;
     (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
   }
+  function bx(k, v) { try { if (v === undefined) return localStorage.getItem('eh-bx-' + k); localStorage.setItem('eh-bx-' + k, v); } catch (_) { return null; } }
+  function topBanners() {
+    const storyOk = [0, 1].includes(new Date().getDay()) || (!storySeen() && new Date().getDay() === 2);
+    if (!simple()) return weatherBanner() + setupBanner() + (storyOk ? storyBar() : '');
+    const opts = [];
+    const w = weatherBanner();
+    if (w) { const sig = ((S.household && S.household.weather) || []).map((n) => n.title + '|' + (n.until || '')).join('~').slice(0, 300); if (bx('weather') !== sig) opts.push(['weather', w, sig]); }
+    const sb = setupBanner(); if (sb && !(Number(bx('setup')) > Date.now())) opts.push(['setup', sb, String(Date.now() + 14 * 86400000)]);
+    if (storyOk && !storySeen() && bx('story') !== weekStart()) { const st = storyBar(); if (st) opts.push(['story', st, weekStart()]); }
+    if (!opts.length) return '';
+    const [k, html, val] = opts[0];
+    return `<div class="bannerwrap">${html}<button type="button" class="bandx" data-act="banner-x" data-k="${k}" data-v="${esc(val)}" aria-label="Hide this">×</button></div>`;
+  }
   function setupBanner() {
     const steps = setupSteps();
     const n = steps.filter((x) => x.done).length;
@@ -2426,6 +2532,7 @@ function setup() {
     if (sh.type === 'request') return requestSheet(sh);
     if (sh.type === 'ask') return askSheet();
     if (sh.type === 'payoff') return payoffSheet();
+    if (sh.type === 'addmenu') return addMenuSheet();
     return '';
   }
   function portalUrl(r) { return CFG.APP_URL + 'tenant.html?t=' + r.portal_token; }
@@ -2868,6 +2975,11 @@ function setup() {
       case 'bill-restore': { const b = findBill(id); if (!b) break; saveBill(Object.assign({}, b, { active: true })); render(); toast(billTitle(b) + ' is back'); break; }
       case 'bill-forget': { if (S.forgetArm !== id) { S.forgetArm = id; render(); setTimeout(() => { if (S.forgetArm === id) { S.forgetArm = null; renderSoon(); } }, 4000); break; } S.forgetArm = null; deleteBill(id); render(); toast('Deleted for good'); break; }
       case 'app-reload': window.location.reload(); break;
+      case 'density': try { localStorage.setItem('eh-density', el.dataset.v); } catch (_) {} S.open = null; render(); toast(el.dataset.v === 'simple' ? 'Simple layout' : 'Detailed layout'); break;
+      case 'expand': S.open = S.open === id ? null : id; render(); { const n = document.getElementById('bill-' + id) || document.getElementById('rent-' + id) || document.getElementById('task-' + id); if (n && S.open) n.scrollIntoView({ block: 'nearest', behavior: reduceMotion() ? 'auto' : 'smooth' }); } break;
+      case 'needs-all': S.needsAll = !S.needsAll; render(); break;
+      case 'banner-x': bx(el.dataset.k, el.dataset.v); if (el.dataset.k === 'story') { try { localStorage.setItem('eh-story', weekStart()); } catch (_) {} } render(); break;
+      case 'add-menu': S.sheet = { type: 'addmenu' }; FX.sheetEnter = true; render(); break;
       case 'tour-next': if (S.tour < TOUR.length - 1) { S.tour++; render(); } else endTour(); break;
       case 'tour-skip': endTour(); break;
       case 'tour-again': S.tour = 0; window.scrollTo(0, 0); render(); break;
@@ -3031,7 +3143,7 @@ function setup() {
     } else if (kind === 'done-receipt') {
       doneReceipt(el);
     } else if (kind === 'cz-show') {
-      const c = getCustom(); const k = el.dataset.kind; const h = new Set(c[k].hidden || []);
+      const c = getCustom(); const k = el.dataset.kind; const h = new Set(c[k].hidden || (k === 'tabs' && simple() ? ['personal'] : []));
       if (el.checked) h.delete(el.dataset.id); else h.add(el.dataset.id);
       c[k].hidden = Array.from(h); setCustom(c); render();
     } else if (kind === 'cz-name') {
@@ -3524,6 +3636,8 @@ function setup() {
   })();
 
   // ---------- appearance (per device) ----------
+  function getDensity() { try { return localStorage.getItem('eh-density') === 'detailed' ? 'detailed' : 'simple'; } catch (_) { return 'simple'; } }
+  function simple() { return getDensity() === 'simple'; }
   function getTextSize() { try { return localStorage.getItem('eh-text') || '1'; } catch (_) { return '1'; } }
   function applyTextSize(v) { if (v === '1') document.documentElement.removeAttribute('data-text'); else document.documentElement.setAttribute('data-text', v); }
   function getTheme() { try { return localStorage.getItem('eh-theme') || 'auto'; } catch (_) { return 'auto'; } }

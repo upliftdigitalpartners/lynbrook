@@ -1,5 +1,5 @@
 // Service worker: offline app shell + push notifications.
-const VERSION = 'v2.13.4';
+const VERSION = 'v3.0.0';
 const CACHE = 'evergreen-' + VERSION;
 const SHELL = [
   './',
