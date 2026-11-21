@@ -16,7 +16,7 @@
 <link rel="preload" href="fonts/inter.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/fraunces.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
-<script>try{var t=localStorage.getItem('eh-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);var z=localStorage.getItem('eh-text');if(z==='1.12'||z==='1.25')document.documentElement.setAttribute('data-text',z)}catch(e){}</script>
+<script>try{var t=localStorage.getItem('eh-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('eh-density')!=='detailed')document.documentElement.classList.add('simple');var z=localStorage.getItem('eh-text');if(z==='1.12'||z==='1.25')document.documentElement.setAttribute('data-text',z)}catch(e){}</script>
 </head>
 <body>
 <div id="app" aria-live="polite"><div class="splash"><img src="icons/icon-192.png" alt="" width="72" height="72"><p>Loading…</p></div></div>
