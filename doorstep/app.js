@@ -761,7 +761,7 @@
   function renderSoon() { cancelAnimationFrame(raf); raf = requestAnimationFrame(render); }
   const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   // One-shot effects that must not replay on every re-render
-  const FX = { stamp: null, stampUntil: 0, sheetEnter: false, ringFrom: {} };
+  const FX = { stamp: null, stampUntil: 0, sheetEnter: false, ringFrom: {}, tideFrom: {}, rollFrom: {}, lastTab: null };
   function confetti() {
     if (reduceMotion()) return;
     const layer = document.getElementById('fx'); if (!layer) return;
@@ -781,6 +781,7 @@
       const from = FX.ringFrom[key] != null ? FX.ringFrom[key] : to;
       FX.ringFrom[key] = to;
       const arc = el.querySelector('.ring-arc'), num = el.querySelector('.ring-num');
+      if (!arc || !num) return;
       const C = Number(arc.dataset.c);
       const off = (v) => (C * (Math.max(0, Math.min(total, v)) / total)).toFixed(1); // v = amount still to pay; empty ring at 0% paid
       if (from === to || reduceMotion()) { arc.style.strokeDashoffset = off(to); return; }
@@ -790,6 +791,36 @@
       const tick = (t) => { const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3); num.textContent = money(from + (to - from) * e); if (k < 1) requestAnimationFrame(tick); };
       requestAnimationFrame(tick);
     });
+    // Tide: water rises to the new level (from empty the first time this month is shown)
+    document.querySelectorAll('[data-tide]').forEach((el) => {
+      const key = el.dataset.tide, to = Number(el.dataset.pct);
+      const from = FX.tideFrom[key] != null ? FX.tideFrom[key] : 0;
+      FX.tideFrom[key] = to;
+      if (from === to || reduceMotion()) return;
+      el.classList.add('still'); el.style.setProperty('--lvl', tideLvl(from) + '%');
+      void el.offsetWidth; el.classList.remove('still'); el.style.setProperty('--lvl', tideLvl(to) + '%');
+    });
+    // Rolling digits: each digit spins from its old value (or 0) to the new one, left to right
+    document.querySelectorAll('[data-roll]').forEach((el) => {
+      const key = el.dataset.roll, to = Number(el.dataset.v);
+      const from = FX.rollFrom[key] != null ? FX.rollFrom[key] : 0;
+      FX.rollFrom[key] = to;
+      if (from === to || reduceMotion()) return;
+      const txt = money(to);
+      el.innerHTML = rollHtml(txt, money(from));
+      el.classList.add('still'); void el.offsetWidth; el.classList.remove('still');
+      const digits = [...txt].filter((ch) => /\d/.test(ch));
+      el.querySelectorAll('.rd-col').forEach((c, i) => { c.style.transitionDelay = (i * 60) + 'ms'; c.style.setProperty('--d', digits[i]); });
+    });
+    // Stack: list cards deal in when you switch tabs
+    if (S.tab !== FX.lastTab) {
+      FX.lastTab = S.tab;
+      if (!reduceMotion()) document.querySelectorAll('#app .bills > li').forEach((li, i) => {
+        if (i > 7) return;
+        li.style.animationDelay = (i * 55) + 'ms'; li.classList.add('deal');
+        li.addEventListener('animationend', () => { li.classList.remove('deal'); li.style.animationDelay = ''; }, { once: true });
+      });
+    }
     // Sheet: spring in once when opened
     const sh = document.querySelector('.sheet');
     if (sh && FX.sheetEnter && !reduceMotion()) {
@@ -998,6 +1029,24 @@
       ${isCur ? '' : '<button class="btn" data-act="month-today">This month</button>'}
     </div>`;
   }
+  // Water-fill circle: the level rises with % paid (animated in afterRender)
+  function tideBall(key, pct, size, inner) {
+    const p = Math.max(0, Math.min(100, pct));
+    return `<div class="tide${size ? ' ' + size : ''}" data-tide="${esc(key)}" data-pct="${p}" style="--lvl:${tideLvl(p)}%">
+      <div class="tide-lvl" aria-hidden="true"><i class="tide-w a"></i><i class="tide-w b"></i></div>
+      <div class="tide-c">${inner}</div></div>`;
+  }
+  function tideLvl(p) { return p >= 100 ? -8 : 100 - p; } // full: lift past the brim so no edge gaps show
+  // Amount whose digits roll into place like a counter (animated in afterRender)
+  function rollNum(key, v) {
+    return `<span class="big display num"><span class="sr">${money(v)}</span><span class="roll" data-roll="${esc(key)}" data-v="${Number(v) || 0}" aria-hidden="true">${rollHtml(money(v), money(v))}</span></span>`;
+  }
+  function rollHtml(txt, from) {
+    const f = from && from.length === txt.length ? from : null;
+    return [...txt].map((ch, i) => /\d/.test(ch)
+      ? `<span class="rd"><span class="rd-col" style="--d:${f && /\d/.test(f[i]) ? f[i] : 0}">${'0123456789'.split('').map((n) => `<span>${n}</span>`).join('')}</span></span>`
+      : `<span>${ch}</span>`).join('');
+  }
   function ringHero(key, label, left, total, pct, footL, footR, late) {
     const R = 78, C = 2 * Math.PI * R;
     const off = (C * (total > 0 ? Math.max(0, left) / total : 0)).toFixed(1);
@@ -1067,17 +1116,13 @@
   // ----- Bills tab -----
   function billsHero(md, pct) {
     const left = md.total - md.paid;
-    const R = 48, C = 2 * Math.PI * R;
-    const off = (C * (md.total > 0 ? Math.max(0, left) / md.total : 0)).toFixed(1);
+    const key = 'bills-' + S.month + '-' + S.unit;
     return `<section class="hero billhero" aria-label="Still to pay">
-      <div class="billhero-row" data-ring="${esc('bills-' + S.month + '-' + S.unit)}" data-to="${left}" data-total="${md.total || 1}">
-        <div class="ringwrap sm"><svg width="112" height="112" viewBox="0 0 112 112" role="img" aria-label="${pct}% paid">
-          <circle cx="56" cy="56" r="${R}" class="ring-track"></circle>
-          <circle cx="56" cy="56" r="${R}" class="ring-arc" data-c="${C.toFixed(1)}" transform="rotate(-90 56 56)" style="stroke-dasharray:${C.toFixed(1)};stroke-dashoffset:${off}"></circle></svg>
-          <div class="ring-center"><span class="ring-pct">${pct}%</span><span class="tiny">paid</span></div></div>
+      <div class="billhero-row">
+        ${tideBall(key, pct, 'sm', `<span class="tide-pct">${pct}%</span><span class="tiny">paid</span>`)}
         <div class="stack" style="gap:2px;min-width:0">
           <span class="label">Still to pay</span>
-          <span class="big display num ring-num">${money(left)}</span>
+          ${rollNum(key, left)}
           <span class="small" style="color:var(--hero-muted)">${money(md.paid)} of ${money(md.total)} paid</span>
           ${md.overdue ? `<span class="small late">${md.overdue} overdue · ${money(md.overdueAmt)}</span>` : ''}
         </div>
@@ -1546,28 +1591,15 @@
     const floors = S.units.filter((u) => isFloor(u.name) && !u.exclude_from_tax).sort((a, b) => b.sort - a.sort);
     const homes = S.units.filter((u) => u.exclude_from_tax);
     const look = { paid: ['#A9BCF5', 'Paid', true], soon: ['#F2C46B', '', true], late: ['#E46A4B', 'Late', true], up: ['#3A4843', 'Due', false], setup: ['#3A4843', 'No rent set', false], auto: ['#3A4843', 'Due', false] };
-    const H = 56, gap = 14, top = 88, n = Math.max(1, floors.length);
-    const bodyH = n * H + (n + 1) * gap;
-    const wins = floors.map((u, i) => {
+    const wins = floors.map((u) => {
       const row = md.rows.find((x) => x.r.unit_id === u.id);
-      let fill = '#2A3833', label = 'Vacant', lit = false, txt = '#C9D1CC';
-      if (row) { const L = look[row.st.k] || look.up; fill = L[0]; lit = L[2]; label = L[1] || (row.st.label.startsWith('Partial') ? 'Partial' : row.st.label.split(' ·')[0]); txt = lit ? fill : '#C9D1CC'; }
-      const yy = top + gap + i * (H + gap);
-      return { svg: `<rect x="60" y="${yy}" width="180" height="${H}" rx="7" class="${lit ? 'win-lit' : ''}" style="fill:${fill}${lit ? ';filter:drop-shadow(0 0 10px ' + fill + ')' : ''}"></rect><line x1="150" y1="${yy}" x2="150" y2="${yy + H}" style="stroke:#22302B;stroke-width:4"></line>`,
-        chip: `<button type="button" class="hchip" data-act="${row ? 'rental' : 'new-rental-unit'}" ${row ? `data-id="${row.r.id}"` : `data-unit="${u.id}"`}><span>${esc(u.name)}</span><strong style="color:${txt}">${esc(label)}</strong></button>`, label: u.name + ': ' + label };
+      let label = 'Vacant', txt = '#C9D1CC';
+      if (row) { const L = look[row.st.k] || look.up; label = L[1] || (row.st.label.startsWith('Partial') ? 'Partial' : row.st.label.split(' ·')[0]); txt = L[2] ? L[0] : '#C9D1CC'; }
+      return { chip: `<button type="button" class="hchip" data-act="${row ? 'rental' : 'new-rental-unit'}" ${row ? `data-id="${row.r.id}"` : `data-unit="${u.id}"`}><span>${esc(u.name)}</span><strong style="color:${txt}">${esc(label)}</strong></button>` };
     });
-    const h = top + bodyH + 6;
+    const key = 'rent-' + S.month;
     return `<section class="hero househero" aria-label="Rent collected">
-      <div class="row between" style="align-items:flex-end">
-        <div class="stack" style="gap:2px"><span class="label">Rent collected</span><span class="big display num">${money(md.received)}</span></div>
-        <span class="pct display">${pct}%</span>
-      </div>
-      <svg width="300" height="${h}" viewBox="0 0 300 ${h}" role="img" aria-label="House: ${esc(wins.map((w) => w.label).join(', '))}" style="align-self:center;max-width:100%">
-        <path d="M150 14 L270 ${top} L30 ${top} Z" style="fill:#2A3833"></path>
-        <rect x="212" y="34" width="18" height="40" style="fill:#2A3833"></rect>
-        <rect x="44" y="${top}" width="212" height="${bodyH}" rx="4" style="fill:#22302B"></rect>
-        ${wins.map((w) => w.svg).join('')}
-      </svg>
+      ${tideBall(key, pct, '', `<span class="label">Rent collected</span>${rollNum(key, md.received)}<span class="tide-pct">${pct}% in</span>`)}
       <div class="hchips">${wins.map((w) => w.chip).join('')}</div>
       <div class="foot"><span>of ${money(md.expected)} expected</span><span class="${md.late ? 'late' : ''}">${md.late ? md.late + ' late' : 'None late'}</span></div>
       ${homes.length ? `<div class="homechip"><svg width="28" height="24" viewBox="0 0 56 48" aria-hidden="true"><path d="M28 4 L52 22 L4 22 Z" style="fill:#A9BCF5"></path><rect x="10" y="22" width="36" height="24" rx="2" style="fill:#34403B;stroke:#A9BCF5;stroke-width:3"></rect></svg><span>${esc(homes.map((u) => u.name).join(', '))} · your home, kept separate</span></div>` : ''}
